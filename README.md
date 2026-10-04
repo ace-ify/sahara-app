@@ -327,7 +327,7 @@ Built for the **Agora Voice AI Hackathon 2026** by:
 ---
 
 <p align="center" style="color: #94a3b8; font-size: 13px;">
-  &copy; 2026 Sahārā Health Technologies &bull; Licensed under the MIT License
+  &copy; 2026 Sahārā w <3  &bull; Licensed under the MIT License
 </p>
 
 </div>
