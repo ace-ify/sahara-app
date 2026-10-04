@@ -1,0 +1,32 @@
+# Root-level ignores (sub-projects have their own .gitignore files:
+# mobile/, agent/, agent/server/, agent/web/, backend/)
+
+# Third-party vendored reference copy (not part of this project)
+/_ref/
+
+# Personal reference images (never publish)
+/reference/
+
+# Secrets / env (defense in depth — each sub-project also ignores these)
+.env
+.env.*
+!.env.example
+
+# Dependencies / builds (redundant safety)
+node_modules/
+venv/
+.venv/
+__pycache__/
+dist/
+.expo/
+
+# Editor / OS
+.vscode/
+.idea/
+.claude/
+.playwright-mcp/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

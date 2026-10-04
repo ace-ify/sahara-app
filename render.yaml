@@ -1,0 +1,39 @@
+# Render Blueprint for the Sahara voice-agent backend (agent/server FastAPI).
+# Deploy: push this repo to GitHub → dashboard.render.com → New + → Blueprint →
+# select this repo. After the first deploy, paste the secret values (from your
+# local agent/server/.env) into the Render dashboard env vars.
+services:
+  - type: web
+    name: sahara-agent-server
+    runtime: python
+    plan: free
+    rootDir: agent/server
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Secrets are left blank here on purpose — fill them in the Render
+      # dashboard so they never live in the public repo.
+      - key: AGORA_APP_ID
+        sync: false
+      - key: AGORA_APP_CERTIFICATE
+        sync: false
+      - key: MURF_API_KEY
+        sync: false
+      - key: MURF_VOICE
+        sync: false
+      - key: LLM_PROVIDER
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_PROXY_SECRET
+        sync: false
+      - key: LLM_PROXY_URL
+        sync: false
