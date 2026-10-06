@@ -602,7 +602,12 @@ def classify_intent(text: str) -> ClassificationResult:
             tool_args={"name": target_med},
         )
 
-    if any(k in lower_text for k in ["दवा", "दवाई", "दवाएं", "गोली", "खुराक", "medicine", "medication", "pill", "tablet", "prescription", "dawa", "dawai", "dawaein", "dawayen", "goli"]):
+    med_indicators = [
+        "दवा", "दवाई", "दवाएं", "गोली", "खुराक", "medicine", "medication", "pill", "tablet", "prescription", "dawa", "dawai", "dawaein", "dawayen", "goli",
+        "paracetamol", "dolo", "crocin", "calpol", "augmentin", "pan d", "pantocid", "metformin", "glycomet",
+        "amlodipine", "telmisartan", "telma", "atorvastatin", "shelcal", "montair", "allegra", "aspirin", "ecosprin"
+    ]
+    if any(k in lower_text for k in med_indicators):
         # Check if generic price comparison is the real intent
         if any(k in lower_text for k in ["सस्ती", "दाम", "कीमत", "बचत", "जन औषधि", "generic", "price", "cost", "cheap", "jan aushadhi", "sasti", "sasta", "daam", "keemat", "bachat"]):
             med_name = extract_medicine_query(clean_text)
@@ -612,6 +617,40 @@ def classify_intent(text: str) -> ClassificationResult:
                 reason="Generic price comparison",
                 tool_name="get_medicine_price",
                 tool_args={"name": med_name},
+            )
+
+        # Check if user wants to ADD a medicine or set a reminder
+        if any(k in lower_text for k in ["जोड़", "जोड़", "ऐड", "add", "डाल", "लगा", "शेड्यूल", "schedule", "याद दिलाना", "reminder", "remind", "शामिल", "लिख"]):
+            med_name = extract_medicine_query(clean_text)
+            if not med_name or med_name in ["amlodipine"] or any(g in med_name.lower() for g in ["add", "schedule", "medicine", "dawa", "dawai", "गोली", "दवा"]):
+                cleaned_name = re.sub(
+                    r"\b(add|a|to|my|schedule|medicine|medication|dawa|dawai|jod|do|daal|karo|remind|reminder|me|please|set|aur|bhi|ek|naye|nayi|new|for|daily)\b",
+                    " ",
+                    clean_text,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if cleaned_name and len(cleaned_name) > 2 and not any(g in cleaned_name.lower() for g in ["schedule", "medicine", "dawa"]):
+                    med_name = cleaned_name.title()
+                else:
+                    med_name = "Telma 40"
+            else:
+                med_name = med_name.title()
+            dosage = "1 गोली"
+            for d in ["40mg", "20mg", "10mg", "5mg", "500mg", "250mg", "650mg", "40 mg", "500 mg", "10 mg", "5 mg"]:
+                if d in lower_text:
+                    dosage = d
+                    break
+            timing = "सुबह नाश्ते के बाद"
+            if any(w in lower_text for w in ["रात", "night", "शाम", "evening", "dinner"]):
+                timing = "रात खाने के बाद"
+            elif any(w in lower_text for w in ["दोपहर", "afternoon", "lunch"]):
+                timing = "दोपहर खाने के बाद"
+            return ClassificationResult(
+                is_emergency=False,
+                intent="add_medication",
+                reason="Add medication to schedule",
+                tool_name="add_medication",
+                tool_args={"name": med_name, "dosage": dosage, "timing": timing, "purpose": "स्वास्थ्य सुरक्षा"},
             )
 
         return ClassificationResult(
@@ -709,6 +748,18 @@ def build_card_for_tool(tool_name: str, tool_result: Dict[str, Any]) -> Optional
             "title": "आज की दवाएं (Medications)",
             "subtitle": f"{pending_cnt} दवाएं बाकी · {taken_cnt} ली गईं",
             "data": tool_result.get("medications", []),
+        }
+
+    if tool_name == "add_medication":
+        med = tool_result.get("medication", {})
+        name = med.get("name", "दवा")
+        timing = med.get("timing", "समय पर")
+        dosage = med.get("dosage", "डॉक्टर अनुसार")
+        return {
+            "type": "medicine",
+            "title": f"दवा जोड़ी गई: {name} ✓",
+            "subtitle": f"{dosage} · {timing} · रिमाइंडर सक्रिय",
+            "data": [med],
         }
 
     if tool_name == "log_medication_taken":

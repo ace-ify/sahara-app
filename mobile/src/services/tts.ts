@@ -69,6 +69,37 @@ export function stopNaturalVoice() {
   }
 }
 
+// Pre-warmed audio element for Web to overcome browser autoplay restrictions
+let prewarmedWebAudio: any = null;
+
+export function prewarmWebAudio() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    if (!prewarmedWebAudio) {
+      prewarmedWebAudio = new window.Audio();
+    }
+    // Silent 1-sample data URI primes the browser's user activation state
+    prewarmedWebAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    prewarmedWebAudio.load();
+    const p = prewarmedWebAudio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {});
+    }
+  } catch {}
+}
+
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  const unlock = () => {
+    prewarmWebAudio();
+    window.removeEventListener('click', unlock);
+    window.removeEventListener('touchstart', unlock);
+    window.removeEventListener('keydown', unlock);
+  };
+  window.addEventListener('click', unlock, { once: true, passive: true });
+  window.addEventListener('touchstart', unlock, { once: true, passive: true });
+  window.addEventListener('keydown', unlock, { once: true, passive: true });
+}
+
 function playWebAudio(
   audioUrl: string,
   trimmed: string,
@@ -76,21 +107,28 @@ function playWebAudio(
   gen: number,
   cb?: VoiceCallbacks,
 ) {
-  const audio = new window.Audio(audioUrl);
-  currentPlayer = audio;
-  audio.onended = () => {
-    if (gen === speechGeneration) cb?.onDone?.();
-  };
-  audio.onerror = () => {
-    console.warn('[tts] web audio element error for', audioUrl);
-    if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
-  };
-  cb?.onStart?.();
   try {
-    audio.play().catch((err: unknown) => {
-      console.warn('[tts] web audio play() rejected:', err);
+    const audio = prewarmedWebAudio || new window.Audio();
+    audio.crossOrigin = 'anonymous';
+    currentPlayer = audio;
+
+    audio.onended = () => {
+      if (gen === speechGeneration) cb?.onDone?.();
+    };
+    audio.onerror = (e: any) => {
+      console.warn('[tts] web audio element error for', audioUrl, e);
       if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
-    });
+    };
+
+    audio.src = audioUrl;
+    cb?.onStart?.();
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((err: unknown) => {
+        console.warn('[tts] web audio play() rejected (falling back to device TTS):', err);
+        if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+      });
+    }
   } catch (err) {
     console.warn('[tts] web audio play() threw:', err);
     if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
@@ -239,6 +277,11 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
   if (!trimmed) {
     cb?.onError?.();
     return;
+  }
+
+  // Prewarm audio element synchronously during user gesture window on Web
+  if (Platform.OS === 'web') {
+    prewarmWebAudio();
   }
 
   stopNaturalVoice();

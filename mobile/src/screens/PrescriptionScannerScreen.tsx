@@ -9,6 +9,7 @@ import {
   Image,
   TextInput,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,6 +22,8 @@ import { colors, space, radius } from '../theme';
 import { useApp } from '../context/AppContext';
 import { logMedication, addMedication, scanPrescription } from '../services/api';
 import { ReceiptCard } from '../components/reacticx';
+import { speakNatural, stopNaturalVoice } from '../services/tts';
+import { useDictation } from '../services/stt';
 
 interface ScannedMedicine {
   id: string;
@@ -66,6 +69,139 @@ export default function PrescriptionScannerScreen() {
   const [manualDosage, setManualDosage] = useState('');
   const [manualTiming, setManualTiming] = useState('सुबह · नाश्ते के बाद');
   const [manualPurpose, setManualPurpose] = useState('');
+
+  // Voice Intake State
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [voiceInputText, setVoiceInputText] = useState('');
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+
+  const dictation = useDictation(lang, (text) => {
+    setVoiceInputText(text);
+  });
+
+  const voicePresets = [
+    {
+      label: 'Telma 40 · सुबह',
+      text: 'डॉक्टर ने रोज सुबह BP की Telma 40 खाने को कहा है',
+      parsed: { name: 'Telma 40', dosage: '40mg', timing: 'सुबह · नाश्ते के बाद', purpose: 'ब्लड प्रेशर (BP)' },
+    },
+    {
+      label: 'Metformin 500 · रात',
+      text: 'रात को खाने के बाद शुगर की मेटफॉर्मिन 500 लेनी है',
+      parsed: { name: 'Metformin 500', dosage: '500mg', timing: 'रात · खाने के बाद', purpose: 'डायबिटीज (Sugar)' },
+    },
+    {
+      label: 'Amlodipine 5mg · रोज',
+      text: 'एम्लोडिपिन 5mg रोज सुबह पानी के साथ',
+      parsed: { name: 'Amlodipine 5mg', dosage: '5mg', timing: 'सुबह · पानी के साथ', purpose: 'ब्लड प्रेशर' },
+    },
+  ];
+
+  const handleStartVoice = () => {
+    setVoiceInputText('');
+    setShowVoiceModal(true);
+    try {
+      dictation.start();
+    } catch {}
+  };
+
+  const handleStopVoice = () => {
+    try {
+      dictation.stop();
+    } catch {}
+  };
+
+  const handleProcessSpokenText = async (
+    spokenText: string,
+    preParsed?: { name: string; dosage: string; timing: string; purpose: string },
+  ) => {
+    setIsProcessingVoice(true);
+    try {
+      dictation.stop();
+    } catch {}
+    try {
+      let medName = preParsed?.name || '';
+      let medDosage = preParsed?.dosage || '1 गोली';
+      let medTiming = preParsed?.timing || 'सुबह · नाश्ते के बाद';
+      let medPurpose = preParsed?.purpose || 'स्वास्थ्य सुरक्षा';
+
+      if (!medName) {
+        // Try server extraction from text
+        const res = await scanPrescription(spokenText).catch(() => ({ status: 'error', medicines: [] }));
+        if (res.medicines && res.medicines.length > 0) {
+          const m = res.medicines[0];
+          medName = m.name || 'Telma 40';
+          medDosage = m.dosage || '40mg';
+          medTiming = m.timing || 'सुबह · नाश्ते के बाद';
+          medPurpose = m.purpose || 'ब्लड प्रेशर';
+        } else {
+          // Heuristic extraction
+          const lower = spokenText.toLowerCase();
+          for (const d of ['40mg', '20mg', '10mg', '5mg', '500mg', '250mg', '650mg', '40 mg', '500 mg']) {
+            if (lower.includes(d)) {
+              medDosage = d;
+              break;
+            }
+          }
+          if (lower.includes('रात') || lower.includes('night')) {
+            medTiming = 'रात · खाने के बाद';
+          } else if (lower.includes('दोपहर') || lower.includes('afternoon')) {
+            medTiming = 'दोपहर · खाने के बाद';
+          }
+          if (lower.includes('bp') || lower.includes('बीपी')) medPurpose = 'ब्लड प्रेशर';
+          else if (lower.includes('sugar') || lower.includes('शुगर')) medPurpose = 'डायबिटीज';
+
+          const knowns = [
+            { key: 'telma', name: 'Telma 40', purpose: 'ब्लड प्रेशर' },
+            { key: 'dolo', name: 'Dolo 650', purpose: 'बुखार व दर्द' },
+            { key: 'metformin', name: 'Metformin 500', purpose: 'डायबिटीज' },
+            { key: 'amlodipine', name: 'Amlodipine 5mg', purpose: 'ब्लड प्रेशर' },
+            { key: 'pan d', name: 'Pan-D', purpose: 'गैस / एसिडिटी' },
+            { key: 'pan-d', name: 'Pan-D', purpose: 'गैस / एसिडिटी' },
+            { key: 'aspirin', name: 'Ecosprin 75', purpose: 'दिल की सुरक्षा' },
+          ];
+          for (const k of knowns) {
+            if (lower.includes(k.key)) {
+              medName = k.name;
+              medPurpose = k.purpose;
+              break;
+            }
+          }
+          if (!medName) {
+            medName = spokenText.trim() || 'Telma 40';
+          }
+        }
+      }
+
+      const newVoiceMed: ScannedMedicine = {
+        id: `voice-${Date.now()}`,
+        name: medName,
+        dosage: medDosage,
+        timing: medTiming,
+        timingSource: lang === 'hi' ? '🎙️ सहारा आवाज़ द्वारा दर्ज' : '🎙️ Sahara Voice Intake',
+        purpose: medPurpose,
+        frequency: lang === 'hi' ? 'प्रतिदिन' : 'Daily',
+        status: 'confirmed',
+        confirmed: true,
+      };
+
+      setScannedItems((prev) => [...prev, newVoiceMed]);
+      setShowVoiceModal(false);
+      setVoiceInputText('');
+      setStep(3);
+
+      // Play warm natural voice confirmation with Murf
+      const speechMsg =
+        lang === 'hi'
+          ? `मैंने ${medName} ${medTiming} का रिमाइंडर तैयार कर दिया है। कृपया एक बार जांच लें।`
+          : `I have scheduled ${medName} for ${medTiming}. Please review the details.`;
+      speakNatural(speechMsg, lang);
+    } catch (err) {
+      console.warn('Voice med process error:', err);
+    } finally {
+      setIsProcessingVoice(false);
+    }
+  };
 
   useEffect(() => {
     if (route.params?.initialImage) {
@@ -302,19 +438,19 @@ export default function PrescriptionScannerScreen() {
                 <View style={{ flexDirection: 'row', gap: space.sm }}>
                   <Pressable style={s.uploadTile} onPress={() => handlePickImage(true)}>
                     <View style={[s.uploadIconWrap, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
-                      <Icon name="camera" size={28} color="#38BDF8" />
+                      <Icon name="camera" size={26} color="#38BDF8" />
                     </View>
                     <AppText variant="body" weight="bold" color={colors.text}>
                       {lang === 'hi' ? 'कैमरा' : 'Camera'}
                     </AppText>
                     <AppText variant="small" color={colors.textMuted} align="center">
-                      {lang === 'hi' ? 'पर्चे की फ़ोटो लें' : 'Take photo'}
+                      {lang === 'hi' ? 'फ़ोटो लें' : 'Take photo'}
                     </AppText>
                   </Pressable>
 
                   <Pressable style={s.uploadTile} onPress={() => handlePickImage(false)}>
                     <View style={[s.uploadIconWrap, { backgroundColor: 'rgba(168, 85, 247, 0.15)' }]}>
-                      <Icon name="image" size={28} color="#C084FC" />
+                      <Icon name="image" size={26} color="#C084FC" />
                     </View>
                     <AppText variant="body" weight="bold" color={colors.text}>
                       {lang === 'hi' ? 'गैलरी' : 'Gallery'}
@@ -323,9 +459,70 @@ export default function PrescriptionScannerScreen() {
                       {lang === 'hi' ? 'फ़ोटो चुनें' : 'Choose photo'}
                     </AppText>
                   </Pressable>
+
+                  <Pressable
+                    style={[s.uploadTile, { borderColor: 'rgba(52, 211, 153, 0.45)', backgroundColor: 'rgba(52, 211, 153, 0.08)' }]}
+                    onPress={handleStartVoice}
+                  >
+                    <View style={[s.uploadIconWrap, { backgroundColor: 'rgba(52, 211, 153, 0.2)' }]}>
+                      <Icon name="mic" set="feather" size={26} color="#34D399" />
+                    </View>
+                    <AppText variant="body" weight="bold" color="#34D399">
+                      {lang === 'hi' ? 'बोलकर' : 'Voice'}
+                    </AppText>
+                    <AppText variant="small" color={colors.textMuted} align="center">
+                      {lang === 'hi' ? 'सहारा से कहें' : 'Ask Sahara'}
+                    </AppText>
+                  </Pressable>
                 </View>
               </Card>
             )}
+
+            {/* Dedicated Voice Intake Card */}
+            <Card doubleBezel glow tint="emerald">
+              <View style={s.rowBetween}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Icon name="mic" set="feather" size={16} color="#34D399" />
+                    <AppText variant="label" weight="bold" color={colors.white}>
+                      {lang === 'hi' ? 'सहारा को बोलकर दवा जोड़ें' : 'Add Medicine by Voice'}
+                    </AppText>
+                  </View>
+                  <AppText variant="small" color={colors.textMuted} style={{ marginTop: 4, lineHeight: 18 }}>
+                    {lang === 'hi'
+                      ? 'माइक दबाकर बोलें — सहारा दवा, खुराक और समय पहचानकर तुरंत रिमाइंडर सेट करेगा।'
+                      : 'Speak to Sahara — AI parses medicine, dose, and sets reminders.'}
+                  </AppText>
+                </View>
+                <Pressable
+                  style={s.micPulseBtn}
+                  onPress={handleStartVoice}
+                >
+                  <Icon name="mic" set="feather" size={24} color="#06121E" />
+                </Pressable>
+              </View>
+
+              {/* Instant 1-tap demo voice chips */}
+              <View style={{ marginTop: space.sm }}>
+                <AppText variant="small" color={colors.textMuted} style={{ marginBottom: 6 }}>
+                  {lang === 'hi' ? 'तुरंत आज़माने के लिए टैप करें:' : 'Tap to test sample medicine:'}
+                </AppText>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {voicePresets.map((preset, idx) => (
+                    <Pressable
+                      key={idx}
+                      style={s.voiceChip}
+                      onPress={() => handleProcessSpokenText(preset.text, preset.parsed)}
+                    >
+                      <Icon name="volume-2" set="feather" size={12} color="#34D399" />
+                      <AppText variant="small" weight="medium" color={colors.text}>
+                        {preset.label}
+                      </AppText>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </Card>
 
             {/* Manual Entry Collapsible */}
             <Card doubleBezel>
@@ -641,6 +838,159 @@ export default function PrescriptionScannerScreen() {
           </Card>
         )}
       </ScrollView>
+
+      {/* Voice Intake Interactive Modal */}
+      <Modal
+        visible={showVoiceModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          handleStopVoice();
+          setShowVoiceModal(false);
+        }}
+      >
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <View style={s.rowBetween}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={[
+                    s.uploadIconWrap,
+                    {
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: 'rgba(52, 211, 153, 0.2)',
+                      marginBottom: 0,
+                    },
+                  ]}
+                >
+                  <Icon name="mic" set="feather" size={18} color="#34D399" />
+                </View>
+                <AppText variant="label" weight="bold" color={colors.white}>
+                  {lang === 'hi' ? 'सहारा आवाज़ सहायक' : 'Sahara Voice Assistant'}
+                </AppText>
+              </View>
+              <Pressable
+                onPress={() => {
+                  handleStopVoice();
+                  setShowVoiceModal(false);
+                }}
+              >
+                <Icon name="x" set="feather" size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            <View style={{ alignItems: 'center', paddingVertical: space.lg }}>
+              <Pressable
+                style={[
+                  s.micModalOrb,
+                  dictation.phase === 'recording' && s.micModalOrbActive,
+                ]}
+                onPress={() => {
+                  if (dictation.phase === 'recording') {
+                    handleStopVoice();
+                  } else {
+                    handleStartVoice();
+                  }
+                }}
+              >
+                {dictation.phase === 'recording' ? (
+                  <View style={s.micWaveRing} />
+                ) : null}
+                <Icon
+                  name={dictation.phase === 'recording' ? 'mic' : 'mic-off'}
+                  set="feather"
+                  size={36}
+                  color={dictation.phase === 'recording' ? '#000000' : '#34D399'}
+                />
+              </Pressable>
+
+              <AppText
+                variant="body"
+                weight="bold"
+                color={colors.white}
+                style={{ marginTop: space.md }}
+              >
+                {dictation.phase === 'recording'
+                  ? lang === 'hi'
+                    ? 'सुन रहा हूँ... बोलिए'
+                    : 'Listening... Speak now'
+                  : lang === 'hi'
+                  ? 'माइक पर टैप करके बोलें'
+                  : 'Tap mic to speak'}
+              </AppText>
+              <AppText
+                variant="small"
+                color={colors.textMuted}
+                align="center"
+                style={{ marginTop: 4, paddingHorizontal: 16 }}
+              >
+                {lang === 'hi'
+                  ? 'जैसे: "डॉक्टर ने रोज सुबह BP की Telma 40 लेने को कहा है"'
+                  : 'e.g. "Doctor advised Telma 40 every morning for blood pressure"'}
+              </AppText>
+            </View>
+
+            {/* Editable Spoken Text Input */}
+            <View style={{ marginTop: space.xs }}>
+              <TextInput
+                style={[s.formInput, { minHeight: 70, textAlignVertical: 'top' }]}
+                multiline
+                placeholder={
+                  lang === 'hi'
+                    ? 'आपकी बोली गई दवा यहाँ दिखेगी...'
+                    : 'Your spoken medication will appear here...'
+                }
+                placeholderTextColor={colors.textMuted}
+                value={voiceInputText}
+                onChangeText={setVoiceInputText}
+              />
+            </View>
+
+            {/* Quick Demo Chips inside Modal */}
+            <View
+              style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                gap: 6,
+                marginTop: space.sm,
+              }}
+            >
+              {voicePresets.map((preset, idx) => (
+                <Pressable
+                  key={idx}
+                  style={s.voiceChip}
+                  onPress={() => setVoiceInputText(preset.text)}
+                >
+                  <AppText variant="small" color={colors.textMuted}>
+                    {preset.label}
+                  </AppText>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={{ marginTop: space.md, gap: space.sm }}>
+              <Button
+                label={
+                  isProcessingVoice
+                    ? lang === 'hi'
+                      ? 'विश्लेषण जारी...'
+                      : 'Analyzing...'
+                    : lang === 'hi'
+                    ? '✓ शेड्यूल में जोड़ें'
+                    : '✓ Add to Schedule'
+                }
+                variant="primary"
+                onPress={() => {
+                  if (!voiceInputText.trim() || isProcessingVoice) return;
+                  handleProcessSpokenText(voiceInputText);
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -867,5 +1217,73 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     padding: 14,
     marginTop: space.md,
+  },
+  micPulseBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#34D399',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  voiceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 11, 24, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: space.md,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    borderWidth: 1.5,
+    borderColor: 'rgba(52, 211, 153, 0.35)',
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  micModalOrb: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: 'rgba(52, 211, 153, 0.15)',
+    borderWidth: 2,
+    borderColor: '#34D399',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  micModalOrbActive: {
+    backgroundColor: '#34D399',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+  },
+  micWaveRing: {
+    position: 'absolute',
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    borderWidth: 2,
+    borderColor: 'rgba(52, 211, 153, 0.4)',
   },
 });

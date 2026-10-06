@@ -1859,6 +1859,7 @@ def escalate_to_caregiver(reason: str, urgency: str = "medium") -> Dict[str, Any
 
 TOOL_REGISTRY = {
     "get_medications": get_medications,
+    "add_medication": add_medication,
     "log_medication_taken": log_medication_taken,
     "find_facility": find_facility,
     "get_medicine_price": get_medicine_price,
