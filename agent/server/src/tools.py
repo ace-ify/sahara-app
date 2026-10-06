@@ -526,23 +526,23 @@ _SCHEMES_DB: Dict[str, Dict[str, Any]] = {
         "portal_url": "https://beneficiary.nha.gov.in",
     },
 
-    # 2. Senior Citizen Assistive Living Scheme
+    # 2. Senior Citizen Assistive Living Scheme (PM Vayoshri Yojana)
     "rvy": {
-        "id": "rvy",
-        "scheme": "राष्ट्रीय वयोश्री योजना (Rashtriya Vayoshri Yojana)",
-        "summary": "60 वर्ष से अधिक आयु के बुजुर्गों को मुफ्त सहायक उपकरण (व्हीलचेयर, चश्मा, सुनने की मशीन, छड़ी आदि)।",
-        "coverage_amount": "100% मुफ्त उपकरण (₹7,000 से ₹15,000 मूल्य)",
-        "target_beneficiaries": "बीपीएल एवं ₹15,000 प्रतिमाह से कम पारिवारिक आय वाले वरिष्ठ नागरिक (60+)",
+        "id": "pm_vayoshri",
+        "scheme": "प्रधानमंत्री वयोश्री योजना (PM Vayoshri Yojana)",
+        "summary": "BPL 70+ वरिष्ठ नागरिकों को मुफ्त सहायक व सहायक-जीवन उपकरण (व्हीलचेयर, सुनने की मशीन, चश्मा आदि)।",
+        "coverage_amount": "100% मुफ्त उपकरण (ALIMCO द्वारा आपूर्ति)",
+        "target_beneficiaries": "70 वर्ष से अधिक आयु के BPL वरिष्ठ नागरिक, विशेषकर जो दैनिक काम में सहायता चाहते हैं",
         "benefits": [
-            "मुफ्त व्हीलचेयर (Wheelchair) और ट्राईपॉड छड़ी (Walking Stick)",
+            "मुफ्त व्हीलचेयर, वॉकर, ट्राईपॉड छड़ी (Walking Stick)",
             "डिजिटल सुनने की मशीन (Hearing Aid)",
-            "नज़र का चश्मा और कृत्रिम बत्तीसी (Dentures)",
-            "कमर व गर्दन के लिए आर्थोपेडिक बेल्ट व वॉकर",
+            "नज़र का चश्मा (Spectacles) और कृत्रिम बत्तीसी (Dentures)",
+            "कमर व गर्दन के लिए आर्थोपेडिक सहायक बेल्ट",
         ],
-        "eligibility": "आयु 60 वर्ष या अधिक, BPL राशन कार्ड या वृद्धावस्था पेंशनर या परिवार की मासिक आय ₹15,000 से कम।",
-        "documents_required": ["आयु प्रमाण (आधार या वोटर आईडी)", "BPL कार्ड या पेंशन कार्ड", "आय प्रमाण पत्र", "पासपोर्ट फोटो"],
-        "how_to_apply": "ज़िला सामाजिक कल्याण अधिकारी (Social Welfare Office), ALIMCO कैंप में पंजीकरण कराएं या Elderline (14567) पर कॉल करें।",
-        "helpline": "14567 (एल्डरलाइन / Elderline)",
+        "eligibility": "आयु 70 वर्ष या अधिक, BPL परिवार या दैनिक सहायक उपकरण की ज़रूरत।",
+        "documents_required": ["आयु प्रमाण (आधार कार्ड)", "BPL / राशन कार्ड", "आय प्रमाण पत्र", "पासपोर्ट फोटो"],
+        "how_to_apply": "ज़िला सामाजिक कल्याण अधिकारी (Social Welfare Office) या ALIMCO सहायक-उपकरण वितरण शिविर (आसिस्टिव डिवाइस डिस्ट्रीब्यूशन कैंप) में पंजीकरण कराएं।",
+        "helpline": "1800-180-5129 (ALIMCO)",
         "portal_url": "https://socialjustice.gov.in",
     },
 
@@ -608,8 +608,8 @@ _SCHEMES_DB: Dict[str, Dict[str, Any]] = {
     "dialysis": {
         "id": "pmndp",
         "scheme": "प्रधानमंत्री राष्ट्रीय डायलिसिस कार्यक्रम (PMNDP)",
-        "summary": "गुर्दे (Kidney) के मरीजों के लिए जिला अस्पतालों में 100% मुफ्त हीमोडायलिसिस सेवा।",
-        "coverage_amount": "मुफ्त डायलिसिस (प्रति सत्र ₹2,000 से ₹3,000 की बचत)",
+        "summary": "गुर्दे (Kidney) के BPL मरीजों के लिए जिला अस्पतालों में 100% मुफ्त डायलिसिस सेवा।",
+        "coverage_amount": "100% मुफ्त डायलिसिस (जिला अस्पताल में)",
         "target_beneficiaries": "अंतिम चरण के गुर्दा रोग (End-Stage Renal Disease) से पीड़ित BPL मरीज",
         "benefits": [
             "प्रति मरीज हर हफ्ते 2 से 3 डायलिसिस सत्र पूरी तरह मुफ्त",
@@ -619,7 +619,7 @@ _SCHEMES_DB: Dict[str, Dict[str, Any]] = {
         "eligibility": "नेफ्रोलॉजिस्ट द्वारा डायलिसिस की सिफारिश, BPL/कम आय कार्ड या आयुष्मान कार्ड।",
         "documents_required": ["BPL कार्ड या आय प्रमाण", "डॉक्टर का डायलिसिस पर्चा", "आधार कार्ड"],
         "how_to_apply": "ज़िला अस्पताल के डायलिसिस केंद्र में पंजीकरण करवाएं।",
-        "helpline": "104 / 14555",
+        "helpline": "104",
         "portal_url": "https://pmndp.mohfw.gov.in",
     },
 
@@ -1040,57 +1040,90 @@ Return ONLY a valid JSON object without markdown or codeblocks:
 # 6. TOOL HANDLERS IMPLEMENTATION (Full Dynamic + Multi-Tier Fallback)
 # ============================================================================
 
+_STRENGTH_TOKEN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|iu)\b", re.IGNORECASE)
+
+
+def _match_medicine_key(clean_query: str) -> Optional[str]:
+    """Resolve a user/LLM medicine string to a dataset key: synonym → salt+strength → salt prefix."""
+    # 1. Exact synonym table (brands, Hindi, Hinglish)
+    for syn, target in _MEDICINE_SYNONYMS.items():
+        if syn == clean_query:
+            if target in _PRICE_DB:
+                return target
+            break
+
+    # 2. Brand / salt index lookup (longest token match wins)
+    tokens = sorted(re.split(r"[^a-z0-9ऀ-ॿ]+", clean_query) if clean_query else [], key=len, reverse=True)
+    for tok in tokens:
+        if not tok:
+            continue
+        if tok in _MEDICINE_SYNONYMS and _MEDICINE_SYNONYMS[tok] in _PRICE_DB:
+            return _MEDICINE_SYNONYMS[tok]
+        hit = _BRAND_SALT_INDEX.get(tok)
+        if hit:
+            return hit
+
+    # 3. Salt + strength: "telmisartan 80mg" → key telmisartan_80mg
+    m = _STRENGTH_TOKEN_RE.search(clean_query)
+    strength = m.group(1) + m.group(2).lower() if m else ""
+    if strength:
+        for k in _PRICE_DB:
+            if k.endswith("_" + strength):
+                salt = _PRICE_DB[k].get("salt", "").lower()
+                if salt and salt in clean_query:
+                    return k
+                # Brand-name in query with the strength
+                brands = _PRICE_DB[k].get("branded_name", "").lower()
+                if any(b and b in clean_query for b in brands.split("/")):
+                    return k
+
+    # 4. Salt or brand substring containment
+    for tok in tokens:
+        for k, row in _PRICE_DB.items():
+            if tok and (tok in k or tok in row.get("branded_name", "").lower() or tok in row.get("salt", "").lower()):
+                return k
+    return None
+
+
 def get_medicine_price(medicine_name: str = "", name: str = "") -> Dict[str, Any]:
     """
     Compare branded medicine prices with PMBI Jan Aushadhi generic equivalents.
-    Tier 1: Comprehensive 65+ curated essential medicine cache with exact trade names.
+    Tier 1: 100+ medicine PMBJP dataset (data/jan_aushadhi_db.json) with exact trade names.
     Tier 2: Live Groq LLM pharmacy engine for any unlisted medicine in the world.
-    Tier 3: Standard generic formula fallback with Jan Aushadhi locator link.
+    Tier 3: Honest unlisted response with Jan Aushadhi locator link (no invented prices).
     """
     raw_query = (medicine_name or name or "").strip()
     clean_query = raw_query.lower()
 
-    # 1. Check Synonym mapping (e.g. "dolo" -> "paracetamol", "pan-d" -> "pantoprazole")
-    matched_key = None
-    for syn, target in _MEDICINE_SYNONYMS.items():
-        if syn in clean_query or clean_query in syn:
-            matched_key = target
-            break
-
-    # 2. Check Direct Key in 65+ Database
-    if not matched_key:
-        for k in _PRICE_DB.keys():
-            if k in clean_query or clean_query in k:
-                matched_key = k
-                break
+    matched_key = _match_medicine_key(clean_query)
 
     matched_entry = None
     if matched_key and matched_key in _PRICE_DB:
         matched_entry = dict(_PRICE_DB[matched_key])
         matched_entry["source"] = "pmbi_verified_database"
     else:
-        # 3. Tier 2: Live Groq LLM Dynamic Lookup
+        # Tier 2: Live Groq LLM Dynamic Lookup
         dyn_result = _fetch_dynamic_medicine_price_groq(raw_query)
         if dyn_result:
             matched_entry = dyn_result
             matched_entry["source"] = "live_pharmacy_engine"
 
-    # 4. Tier 3: Structured Fallback if both offline
+    # Tier 3: honest unlisted answer — never fabricate a price
     if not matched_entry:
         med_display = raw_query.title() if raw_query else "आवश्यक जेनेरिक दवा"
         matched_entry = {
             "medicine": med_display,
             "branded_name": f"{med_display} (ब्रांडेड)",
-            "branded_price": "₹65 (10 गोलियां)",
-            "generic_price": "₹12 (जन औषधि)",
-            "savings_percentage": "81%",
-            "category": "Generic Health Essential",
-            "use": "जन औषधि केंद्र पर यही दवा समान गुणवत्ता और फॉर्मूले के साथ बहुत कम दाम में उपलब्ध है।",
-            "source": "curated_generic_estimate",
+            "branded_price": "—",
+            "generic_price": "—",
+            "savings_percentage": "—",
+            "category": "",
+            "use": "जन औषधि केंद्र पर यही दवा समान गुणवत्ता में 50% से 85% कम दाम पर मिलती है — केंद्र पर कीमत पूछें।",
+            "source": "unlisted_honest",
         }
 
-    # Add Google Maps quick search link for Jan Aushadhi
-    matched_entry["find_store_url"] = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote("Pradhan Mantri Jan Aushadhi Kendra near me")
+    # GPS-aware Jan Aushadhi store locator link
+    matched_entry["find_store_url"] = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote("Pradhan Mantri Jan Aushadhi Kendra")
 
     msg_hi = (
         f"जन औषधि केंद्र पर {matched_entry['medicine']} ({matched_entry.get('branded_name', '')}) केवल {matched_entry['generic_price']} में मिलती है, "
