@@ -1122,7 +1122,7 @@ _STRENGTH_TOKEN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|iu)\b", re.IGNOREC
 
 
 def _match_medicine_key(clean_query: str) -> Optional[str]:
-    """Resolve a user/LLM medicine string to a dataset key: synonym → salt+strength → salt prefix."""
+    """Resolve a user/LLM medicine string to a dataset key: synonym → salt+strength → brand/salt → containment."""
     # 1. Exact synonym table (brands, Hindi, Hinglish)
     for syn, target in _MEDICINE_SYNONYMS.items():
         if syn == clean_query:
@@ -1130,8 +1130,45 @@ def _match_medicine_key(clean_query: str) -> Optional[str]:
                 return target
             break
 
-    # 2. Brand / salt index lookup (longest token match wins)
     tokens = sorted(re.split(r"[^a-z0-9ऀ-ॿ]+", clean_query) if clean_query else [], key=len, reverse=True)
+
+    # 2. Salt + strength first (exact, most specific): "telmisartan 80mg" → telmisartan_80mg
+    m = _STRENGTH_TOKEN_RE.search(clean_query)
+    strength = m.group(1) + m.group(2).lower() if m else None
+    if strength is None:
+        # bare numeric strength without unit: "rosuvastatin 10" → try mg
+        bare = re.search(r"\b(\d+(?:\.\d+)?)\b", clean_query)
+        if bare:
+            strength = bare.group(1) + "mg"
+    if strength:
+        for k in _PRICE_DB:
+            if k.endswith("_" + strength):
+                salt = _PRICE_DB[k].get("salt", "").lower()
+                if salt and salt in clean_query:
+                    return k
+                brands = _PRICE_DB[k].get("branded_name", "").lower()
+                if any(b and b in clean_query for b in brands.split("/")):
+                    return k
+        # strength present but no direct key match (e.g. "metformin 1000mg" vs key ..._sr):
+        # accept a key whose numeric strength equals the queried one.
+        try:
+            want_num = float(strength.replace("mg", "").replace("mcg", ""))
+        except ValueError:
+            want_num = None
+        if want_num is not None:
+            for k in _PRICE_DB:
+                row = _PRICE_DB[k]
+                if row.get("salt", "").lower() not in clean_query:
+                    continue
+                ks = row.get("strength", "")
+                kn = re.sub(r"[^0-9.]", "", ks.split("/")[0].split("+")[0])
+                try:
+                    if kn and abs(float(kn) - want_num) < 0.01:
+                        return k
+                except ValueError:
+                    continue
+
+    # 3. Brand / salt index lookup (longest token match wins)
     for tok in tokens:
         if not tok:
             continue
@@ -1141,24 +1178,13 @@ def _match_medicine_key(clean_query: str) -> Optional[str]:
         if hit:
             return hit
 
-    # 3. Salt + strength: "telmisartan 80mg" → key telmisartan_80mg
-    m = _STRENGTH_TOKEN_RE.search(clean_query)
-    strength = m.group(1) + m.group(2).lower() if m else ""
-    if strength:
-        for k in _PRICE_DB:
-            if k.endswith("_" + strength):
-                salt = _PRICE_DB[k].get("salt", "").lower()
-                if salt and salt in clean_query:
-                    return k
-                # Brand-name in query with the strength
-                brands = _PRICE_DB[k].get("branded_name", "").lower()
-                if any(b and b in clean_query for b in brands.split("/")):
-                    return k
-
-    # 4. Salt or brand substring containment
+    # 4. Salt or brand substring containment (≥4 chars so stray tokens
+    # can't fuzzy-match, e.g. "xyz" must not hit "Xyzal")
     for tok in tokens:
+        if len(tok) < 4:
+            continue
         for k, row in _PRICE_DB.items():
-            if tok and (tok in k or tok in row.get("branded_name", "").lower() or tok in row.get("salt", "").lower()):
+            if tok in k or tok in row.get("branded_name", "").lower() or tok in row.get("salt", "").lower():
                 return k
     return None
 
