@@ -405,27 +405,20 @@ export async function speakNatural(
 // full-text-synthesis-time to first-sentence-synthesis-time.
 // ---------------------------------------------------------------------------
 
-/** Split a full reply into speakable chunks (sentence-ish, Hindi-aware, clause-aware). */
+/** Split a full reply into speakable sentences (Hindi & English aware). */
 function splitIntoSpeakableChunks(text: string): string[] {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
   if (!clean) return [];
-  // Split on sentence terminators (danda, period, question mark, exclamation, newline)
-  // or on major clause boundaries (comma, semicolon, colon)
-  const parts = clean.split(/(?<=[।.?!:\n]|,\s+)/);
+  // Split STRICTLY on sentence terminators: danda (।), period, question mark, exclamation
+  const parts = clean.split(/(?<=[।.?!\n])/);
   const chunks: string[] = [];
   let buffer = '';
   for (const part of parts) {
     const piece = part.trim();
     if (!piece) continue;
     buffer += (buffer ? ' ' : '') + piece;
-    // Dispatch as soon as a complete clause (>= 22 chars) or sentence boundary is reached
-    if (buffer.length >= 22 && /[।.?!,;:]$/.test(buffer)) {
-      chunks.push(buffer);
-      buffer = '';
-    } else if (/[।.?!]$/.test(buffer)) {
-      chunks.push(buffer);
-      buffer = '';
-    } else if (buffer.length >= 75) {
+    // Only flush if it's a full complete sentence of at least 55 chars
+    if (buffer.length >= 55 && /[।.?!]$/.test(buffer)) {
       chunks.push(buffer);
       buffer = '';
     }
@@ -512,27 +505,19 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
   const speakerRef: any = {};
 
   const speaker = {
-    /** Feed streamed text; sentence-complete pieces are queued for playback immediately. */
+    /** Feed streamed text; full sentences are queued for playback in continuous order. */
     pushText(delta: string) {
       if (generation !== speechGeneration) return;
       _pending += delta;
       const ready = splitIntoSpeakableChunks(_pending);
-      if (ready.length === 0) return;
+      if (ready.length <= 1) return;
 
       const lastPiece = ready[ready.length - 1];
       const complete = ready.slice(0, ready.length - 1);
       for (const piece of complete) {
         if (piece.trim()) chunks.push(piece.trim());
       }
-
-      // If the last piece itself is terminated by sentence or clause punctuation,
-      // dispatch it immediately instead of keeping it stalled in _pending!
-      if (/[।.?!,;:]$/.test(lastPiece.trim()) && lastPiece.trim().length >= 12) {
-        chunks.push(lastPiece.trim());
-        _pending = '';
-      } else {
-        _pending = lastPiece;
-      }
+      _pending = lastPiece;
     },
     /** Mark the text stream complete; flush the pending tail and finish. */
     close() {
