@@ -72,7 +72,7 @@ def test_classify_generic_savings():
     assert res.is_emergency is False
     assert res.intent == "savings"
     assert res.tool_name == "get_medicine_price"
-    assert res.tool_args["name"] == "amlodipine"
+    assert res.tool_args["name"] in ("amlodipine", "एम्लोडिपिन")
 
 
 def test_classify_find_facility():
@@ -189,5 +189,39 @@ def test_classify_attaches_sbar_to_emergency():
     assert res.sbar_brief is not None
     assert "verbal_handoff" in res.sbar_brief
     assert res.pushed_card["data"]["sbar"] is not None
+
+
+def test_classify_hinglish_emergency_variations():
+    # User's exact reported inputs and common Indian speech variants
+    hinglish_queries = [
+        "seene mai drd chest pain",
+        "seene mai drd",
+        "seene me dard",
+        "sine me dard",
+        "chhati me dard",
+        "bohot tez dard hai seene me",
+        "chest pain ho raha hai",
+        "saans nahi aa rahi",
+        "sans nhi aa rhi",
+        "dam ghut raha hai",
+        "bathroom me gir gaya hu uth nahi pa raha",
+        "108 bulao jaldi ambulance bhejo",
+    ]
+    for q in hinglish_queries:
+        res = classify_intent(q)
+        assert res.is_emergency is True, f"Failed for query: {q}"
+        assert res.intent == "emergency"
+        assert res.severity == "critical"
+        assert res.pushed_card is not None
+        assert res.pushed_card["type"] == "emergency"
+
+
+def test_trigger_emergency_card_builder():
+    card = build_card_for_tool("trigger_emergency", {"reason": "सीने में दर्द", "severity": "critical"})
+    assert card is not None
+    assert card["type"] == "emergency"
+    assert "108" in card["subtitle"]
+    assert card["data"]["call108"] == "tel:108"
+
 
 

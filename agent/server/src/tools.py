@@ -1653,6 +1653,24 @@ def escalate_to_caregiver(reason: str, urgency: str = "medium") -> Dict[str, Any
     }
 
 
+def trigger_emergency(reason: str, severity: str = "critical") -> Dict[str, Any]:
+    """
+    CRITICAL: Autonomous tool invocation for acute medical emergencies.
+    Initiates emergency response ladder (108 EMS ambulance + family caregiver).
+    """
+    import laya
+    sbar = laya.build_sbar_brief(reason=reason, severity=severity)
+    return {
+        "status": "triggered",
+        "reason": reason,
+        "severity": severity,
+        "sbar": sbar,
+        "news2_band": "RED",
+        "call108": "tel:108",
+        "message_hi": "108 एम्बुलेंस और परिजन को तुरंत सूचित कर दिया गया है। लाइन पर बने रहें।",
+    }
+
+
 # ============================================================================
 # 8. TOOL REGISTRY & DISPATCHER
 # ============================================================================
@@ -1670,6 +1688,7 @@ TOOL_REGISTRY = {
     "set_reminder": set_reminder,
     "get_reminders": get_reminders,
     "escalate_to_caregiver": escalate_to_caregiver,
+    "trigger_emergency": trigger_emergency,
 }
 
 

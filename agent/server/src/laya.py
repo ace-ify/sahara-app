@@ -35,38 +35,84 @@ class ClassificationResult:
 
 # --- Semantic Keyword / Phrase Dictionaries ---
 
-# Acute emergency indicators (Hindi Devanagari + Transliterated + English)
+# Acute emergency indicators (Hindi Devanagari + Transliterated/Hinglish + English)
 _EMERGENCY_PATTERNS = [
-    # Chest / Heart
+    # 1. Chest / Heart / Cardiac
+    # Devanagari
     r"छाती\s*(?:में)?\s*(?:बहुत\s*)?(?:तेज़\s*)?दर्द",
     r"सीने\s*(?:में)?\s*(?:बहुत\s*)?(?:तेज़\s*)?दर्द",
     r"दिल\s*(?:का\s*दौरा|में\s*दर्द)",
+    # Hinglish / Transliterated
+    r"(?:seene|sine|chhati|chaati|chest|dil)\b.{0,25}?\b(?:dard|drd|pain|pressure|jalan|takleef)\b",
+    r"\b(?:dard|drd|pain)\b.{0,25}?\b(?:seene|sine|chhati|chaati|dil|chest)\b",
+    r"dil\s*(?:ka\s*daura|ka\s*attack|me\s*(?:dard|drd|takleef))",
     r"heart\s*attack",
     r"chest\s*pain",
-    # Fall / Trauma
+    r"cardiac\s*arrest",
+
+    # 2. Fall / Trauma / Immobility
+    # Devanagari
     r"गिर\s*(?:गया|गई|पड़ा|पड़ी)\s*(?:हूँ|है)?\s*(?:उठ\s*नहीं\s*पा\s*रहा|उठ\s*नहीं\s*सकता)?",
     r"चक्कर\s*(?:आ\s*गया|आ\s*रहे|खाकर\s*गिर)",
+    # Hinglish / Transliterated
+    r"gir\s*(?:gaya|gayi|gai|pada|padi|gya)",
+    r"uth\s*(?:nahi|nhi|ni)\s*(?:pa\s*raha|pa\s*rha|pa\s*rahi|pa\s*rhi|sakraha|sakta)",
+    r"chakkar\s*(?:aa\s*(?:gaya|rahe|raha|rhe|gya)|khakar|aara)",
+    # English
     r"fell\s*down",
+    r"fall\s*down",
     r"cannot\s*(?:get\s*up|stand|walk)",
-    r"can\'?t\s*(?:get\s*up|stand)",
-    # Breathlessness
+    r"can\'?t\s*(?:get\s*up|stand|walk)",
+
+    # 3. Breathlessness / Respiratory Distress
+    # Devanagari
     r"सांस\s*(?:नहीं\s*आ\s*रही|फूल\s*रही|घुट\s*रहा|लेने\s*में\s*दिक्कत)",
     r"दम\s*घुट",
+    # Hinglish / Transliterated
+    r"sa?a?ns\s*(?:nahi|nhi|ni)\s*aa\s*r(?:ahi|hi)",
+    r"sa?a?ns\s*(?:phool|fool|ghut)\s*r(?:ahi|hi)",
+    r"sa?a?ns\s*lene\s*me\s*(?:dikkat|takleef|problem)",
+    r"dam\s*ghut",
+    # English
     r"can\'?t\s*breathe",
+    r"cannot\s*breathe",
     r"shortness\s*of\s*breath",
     r"difficulty\s*breathing",
-    # Consciousness / Stroke
+    r"breathless(?:ness)?",
+
+    # 4. Consciousness / Stroke / Neurological
+    # Devanagari
     r"बेहोश",
-    r"unconscious",
     r"मुंह\s*टेढ़ा",
     r"लकवा",
+    # Hinglish / Transliterated
+    r"behosh|behoosh",
+    r"muh\s*tedha|munh\s*tedha",
+    r"lakwa",
+    # English
+    r"unconscious",
     r"stroke",
     r"paralysis",
-    # Severe Bleeding
+
+    # 5. Severe Bleeding / Hemorrhage
+    # Devanagari
     r"खून\s*बह\s*रहा",
+    # Hinglish / Transliterated
+    r"khoon\s*(?:bah|nikal)\s*r(?:aha|ha)",
+    # English
     r"bleeding\s*heavily",
-    # Explicit SOS / 108
+    r"heavy\s*bleeding",
+
+    # 6. Explicit SOS / 108 / Emergency
+    # Devanagari
     r"(?:आपातकाल|इमरजेंसी|जान\s*बचाओ|एम्बुलेंस|108\s*(?:बुलाओ|भेजो))",
+    # Hinglish / Transliterated
+    r"(?:108|112)\s*(?:bulao|bhejo|call|ko\s*call)",
+    r"(?:call|dial)\s*(?:108|112)",
+    r"ambulance\s*(?:bulao|bhejo|call)",
+    r"jaan\s*bachao",
+    r"bachao\s*(?:madad)?",
+    # English
     r"\bsos\b",
     r"\bemergency\b",
     r"\bambulance\b",
@@ -475,14 +521,18 @@ def classify_intent(text: str) -> ClassificationResult:
     # 1. Check for Acute Physical Emergency (Red Path)
     if _EMERGENCY_RE.search(clean_text):
         reason = "मरीज़ को गंभीर शारीरिक तकलीफ़ या आपातकाल के लक्षण हैं।"
-        if "छाती" in clean_text or "सीने" in clean_text or "chest" in lower_text:
+        if any(k in lower_text for k in ["छाती", "सीने", "seene", "sine", "chhati", "chaati", "chest", "dil", "heart"]):
             reason = "मरीज़ को छाती/सीने में तेज़ दर्द की शिकायत है (संभावित हृदय आपातकाल)।"
-        elif "गिर" in clean_text or "fell" in lower_text:
+        elif any(k in lower_text for k in ["गिर", "gir", "fell", "fall", "uth nahi", "uth nhi"]):
             reason = "मरीज़ गिर गया है और उठने में असमर्थ है।"
-        elif "सांस" in clean_text or "breathe" in lower_text:
+        elif any(k in lower_text for k in ["सांस", "saans", "sans", "breathe", "breath", "dam ghut"]):
             reason = "मरीज़ को गंभीर सांस लेने में कठिनाई हो रही है।"
-        elif "चक्कर" in clean_text or "बेहोश" in clean_text:
+        elif any(k in lower_text for k in ["चक्कर", "chakkar", "बेहोश", "behosh", "unconscious"]):
             reason = "मरीज़ को गंभीर चक्कर या बेहोशी के लक्षण हैं।"
+        elif any(k in lower_text for k in ["लकवा", "lakwa", "stroke", "paralysis", "muh tedha", "munh tedha"]):
+            reason = "मरीज़ में स्ट्रोक / पक्षाघात के लक्षण दिखाई दे रहे हैं।"
+        elif any(k in lower_text for k in ["खून", "khoon", "bleeding"]):
+            reason = "मरीज़ को अत्यधिक रक्तस्राव (Severe Bleeding) की समस्या है।"
 
         sbar = build_sbar_brief(reason=reason, severity="critical")
 
@@ -855,6 +905,22 @@ def build_card_for_tool(tool_name: str, tool_result: Dict[str, Any]) -> Optional
             "title": f"सक्रिय रिमाइंडर ({cnt}) ⏰",
             "subtitle": f"{cnt} रिमाइंडर फोन में सक्रिय हैं",
             "data": tool_result.get("reminders", []),
+        }
+
+    if tool_name == "trigger_emergency":
+        reason = tool_result.get("reason", "आपातकालीन स्थिति")
+        sbar = tool_result.get("sbar") or build_sbar_brief(reason=reason, severity="critical")
+        return {
+            "type": "emergency",
+            "title": "आपातकालीन सहायता सक्रिय (SOS)",
+            "subtitle": "108 एम्बुलेंस व परिजन को सूचित कर दिया गया है · लाइन पर बने रहें",
+            "data": {
+                "reason": reason,
+                "severity": tool_result.get("severity", "critical"),
+                "news2_band": "RED",
+                "sbar": sbar,
+                "call108": "tel:108",
+            },
         }
 
     return None

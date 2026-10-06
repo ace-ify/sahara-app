@@ -273,40 +273,89 @@ export function SavingsCard({
   const savings = savingsPercent || '';
   const isUnlisted = !genericPrice || genericPrice === '—';
 
+  // Real numeric prices for the proportional bar: strip "₹35 (15 गोलियां)" → 35
+  const rupees = (p?: string) => {
+    const m = (p || '').match(/₹\s*(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : null;
+  };
+  const brandNum = rupees(brandPrice);
+  const jaNum = rupees(genericPrice);
+  const pct = (() => {
+    const m = (savings || '').match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  })();
+  const barPct = brandNum && jaNum && brandNum > 0 ? Math.round((1 - jaNum / brandNum) * 100) : pct;
+  // सॉल्ट from the title ("Amlodipine 5mg - जन औषधि बचत") → cleaner header line
+  const medName = (title || '').replace(/\s*[-–]\s*जन औषधि.*$/, '').trim();
+  const saltLabel = genericName || medName;
+  const brandLabel = (title || '').includes('जन औषधि') ? 'ब्रांडेड MRP' : 'ब्रांडेड';
+
   return (
     <View style={s.wrap}>
       <CardShell accent={isUnlisted ? 'amber' : 'emerald'}>
         <CardHeader
           icon="tag"
           iconColor={T.emerald}
-          title={title || 'जन औषधि बचत'}
-          pill={isUnlisted ? 'केंद्र पर पूछें' : savings ? `${savings} बचत ✓` : undefined}
+          title={saltLabel || 'जन औषधि बचत'}
+          pill={isUnlisted ? 'केंद्र पर पूछें' : savings ? `बचत ${savings}` : undefined}
           pillColor={T.emerald}
         />
-        {genericName ? (
-          <AppText variant="small" color={T.sub} numberOfLines={1} style={s.subLine}>
-            सॉल्ट: {genericName}
-          </AppText>
-        ) : null}
 
-        {/* Segmented price pills */}
-        <View style={s.priceRow}>
-          <View style={[s.pricePill, { borderColor: T.hairline }]}>
-            <AppText variant="small" color={T.dim} style={{ fontSize: 10 }}>
-              ब्रांडेड
+        {/* Price ledger — big numbers, unit captions, aligned decimal-style */}
+        <View style={s.ledgerRow}>
+          <View style={s.ledgerCell}>
+            <AppText variant="small" color={T.dim} style={{ fontSize: 10, letterSpacing: 0.5 }}>
+              {brandLabel}
             </AppText>
-            <AppText variant="label" weight="bold" color={T.text} style={{ fontSize: 13 }}>
-              {brandPrice || '—'}
+            <AppText variant="h2" weight="bold" color={T.text} style={{ fontSize: 24, lineHeight: 30 }}>
+              {brandNum != null ? `₹${brandNum % 1 ? brandNum.toFixed(1) : brandNum}` : '—'}
+            </AppText>
+            <AppText variant="small" color={T.dim} numberOfLines={1} style={{ fontSize: 9.5 }}>
+              {(() => {
+                const m = (brandPrice || '').match(/\(([^)]+)\)/);
+                return m ? m[1] : '';
+              })()}
             </AppText>
           </View>
-          <View style={[s.pricePill, { borderColor: T.emeraldBorder, backgroundColor: T.emeraldDim }]}>
-            <AppText variant="small" color={T.emerald} style={{ fontSize: 10 }}>
+          <View style={s.ledgerDivider} />
+          <View style={[s.ledgerCell, { alignItems: 'flex-end' }]}>
+            <AppText variant="small" color={T.emerald} style={{ fontSize: 10, letterSpacing: 0.5 }}>
               जन औषधि
             </AppText>
-            <AppText variant="label" weight="bold" color={T.emerald} style={{ fontSize: 13 }}>
-              {genericPrice || '—'}
+            <AppText variant="h2" weight="bold" color={T.emerald} style={{ fontSize: 24, lineHeight: 30 }}>
+              {jaNum != null ? `₹${jaNum % 1 ? jaNum.toFixed(1) : jaNum}` : '—'}
+            </AppText>
+            <AppText variant="small" color={T.dim} numberOfLines={1} style={{ fontSize: 9.5 }}>
+              {(() => {
+                const m = (genericPrice || '').match(/\(([^)]+)\)/);
+                return m ? m[1] : '';
+              })()}
             </AppText>
           </View>
+        </View>
+
+        {/* Proportional savings bar — width IS the savings percent */}
+        {barPct != null && barPct > 0 && !isUnlisted ? (
+          <View style={s.saveTrack}>
+            <View style={[s.saveFill, { width: `${Math.min(barPct, 96)}%` }]} />
+            <View style={s.saveLabelWrap}>
+              <Icon name="trending-down" set="feather" size={11} color={T.emerald} />
+              <AppText variant="small" weight="bold" color={T.emerald} style={{ fontSize: 10 }}>
+                {barPct}% तक बचत · समान गुणवत्ता
+              </AppText>
+            </View>
+          </View>
+        ) : null}
+
+        {/* PMBJP provenance line — trust cue, not decoration */}
+        <View style={s.provenanceRow}>
+          <View style={s.jaDot} />
+          <AppText variant="small" color={T.sub} numberOfLines={1} style={{ fontSize: 10, flex: 1 }}>
+            PMBJP · भारत सरकार सत्यापित जेनेरिक
+          </AppText>
+          <AppText variant="small" color={T.dim} style={{ fontSize: 9, letterSpacing: 0.4 }}>
+            जन औषधि केंद्र
+          </AppText>
         </View>
 
         <ActionRow>
@@ -635,15 +684,62 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
   },
-  priceRow: { flexDirection: 'row', gap: 6 },
-  pricePill: {
-    flex: 1,
+  ledgerRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
     borderWidth: 1,
-    borderRadius: radius.sm,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    borderColor: T.hairlineSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  ledgerCell: { flex: 1, gap: 1 },
+  ledgerDivider: {
+    width: 1,
+    backgroundColor: T.hairline,
+    marginHorizontal: 12,
+    marginVertical: 2,
+  },
+  saveTrack: {
+    height: 30,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: T.hairlineSoft,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  saveFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(5, 223, 114, 0.22)',
+    borderRightWidth: 1,
+    borderRightColor: T.emerald,
+  },
+  saveLabelWrap: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 1,
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+  },
+  provenanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  jaDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: T.emerald,
+    shadowColor: T.emerald,
+    shadowOpacity: 0.7,
+    shadowRadius: 4,
   },
   coverageChip: {
     alignSelf: 'flex-start',

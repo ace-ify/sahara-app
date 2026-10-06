@@ -257,9 +257,18 @@ def _remember_turn(channel: str, user_text: str, reply: str) -> None:
         del mem[:-_CHAT_MEMORY_MAX]
 
 
-async def _memory_aware_sse(payload: dict, channel: str, user_text: str):
-    """Stream brain SSE while capturing the full reply into channel memory."""
+async def _memory_aware_sse(
+    payload: dict,
+    channel: str,
+    user_text: str,
+    card: Optional[Dict[str, Any]] = None,
+):
+    """Stream brain SSE while capturing the full reply into channel memory and streaming companion cards."""
     parts: list[str] = []
+    # If a companion or emergency card was generated for this turn, yield it immediately
+    # in the stream so the client gets the card on the very first event!
+    if card:
+        yield f"data: {json.dumps({'card': card}, ensure_ascii=False)}\n\n"
     try:
         async for chunk in brain.openai_sse(payload):
             if chunk.startswith("data:") and "[DONE]" not in chunk:
@@ -271,6 +280,9 @@ async def _memory_aware_sse(payload: dict, channel: str, user_text: str):
                 except (json.JSONDecodeError, AttributeError, IndexError):
                     pass
             yield chunk
+        if card:
+            # Also attach card to terminal chunk for clients parsing end-of-turn metadata
+            yield f"data: {json.dumps({'card': card, 'choices': [{'delta': {}, 'finish_reason': 'stop'}]}, ensure_ascii=False)}\n\n"
     finally:
         if parts:
             _remember_turn(channel, user_text, "".join(parts))
@@ -285,6 +297,8 @@ def push_card(channel: str, card: Dict[str, Any]) -> None:
     global _latest_global_card
     card_with_ts = {**card, "timestamp": time.time()}
     _card_store[channel] = card_with_ts
+    if channel != "default":
+        _card_store["default"] = card_with_ts
     _latest_global_card = card_with_ts
 
 
@@ -293,12 +307,25 @@ async def get_latest_card(channel: Optional[str] = Query(default=None), max_age:
     """Get latest pushed companion card for mobile display if within max_age seconds."""
     now = time.time()
     card = None
-    if channel and channel in _card_store:
-        card = _card_store[channel]
-    elif _latest_global_card:
-        card = _latest_global_card
 
-    if card and (now - card.get("timestamp", 0) <= max_age):
+    # 1. Emergency card priority: active SOS stays visible up to 300s (5 minutes)
+    if _latest_global_card and _latest_global_card.get("type") == "emergency":
+        if (now - _latest_global_card.get("timestamp", 0) <= 300.0):
+            return {"status": "success", "card": _latest_global_card}
+
+    # 2. Channel-specific card check
+    if channel and channel in _card_store:
+        cand = _card_store[channel]
+        limit = 300.0 if cand.get("type") == "emergency" else max_age
+        if (now - cand.get("timestamp", 0) <= limit):
+            card = cand
+    elif _latest_global_card:
+        cand = _latest_global_card
+        limit = 300.0 if cand.get("type") == "emergency" else max_age
+        if (now - cand.get("timestamp", 0) <= limit):
+            card = cand
+
+    if card:
         return {"status": "success", "card": card}
     return {"status": "none", "card": None}
 
@@ -441,6 +468,27 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
                 pass
         tool_res = tools.execute_tool(classification.tool_name, tool_args)
         card = laya.build_card_for_tool(classification.tool_name, tool_res)
+
+        # Autonomous trigger_emergency tool execution also activates dispatch ladder
+        if classification.tool_name == "trigger_emergency":
+            chat_patient = (payload.get("patient") or "").strip() or "मरीज़"
+            chat_caregiver_phone = (payload.get("caregiver_phone") or "").strip() or os.getenv(
+                "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
+            )
+            contacts = [
+                emergency.Contact(name=f"{chat_patient} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=chat_caregiver_phone),
+                emergency.Contact(name="108 / 112 एम्बुलेंस आपातकालीन सेवा (EMS)", kind="ambulance", endpoint="108"),
+            ]
+            incident = emergency.Incident(
+                channel=active_channel,
+                reason=tool_res.get("reason", "तीव्र आपातकालीन स्थिति"),
+                severity=tool_res.get("severity", "critical"),
+                patient=chat_patient,
+                contacts=contacts,
+                sbar_brief=tool_res.get("sbar"),
+            )
+            asyncio.create_task(dispatch_ladder.trigger(incident))
+
         if card:
             turn_card = card
             push_card(active_channel, card)
@@ -464,7 +512,7 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
 
     if payload.get("stream", True):
         return StreamingResponse(
-            _memory_aware_sse(payload, active_channel, user_text),
+            _memory_aware_sse(payload, active_channel, user_text, card=turn_card),
             media_type="text/event-stream",
         )
     text = await brain.complete_text(payload)

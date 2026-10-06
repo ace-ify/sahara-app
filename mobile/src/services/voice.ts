@@ -180,9 +180,12 @@ export function useAgoraVoice() {
             }
             return prev;
           });
+          if (res.card.type === 'emergency' && stateRef.current !== 'emergency') {
+            setState('emergency');
+          }
         }
       } catch {}
-    }, 2000);
+    }, 1500);
     return () => clearInterval(interval);
   }, [state, channelName]);
 
@@ -630,9 +633,11 @@ export function useAgoraVoice() {
       let reply = chatRes.text || liveReply;
       const turnCard = chatRes.card || null;
 
-      setPushedCard(turnCard);
-      if (turnCard?.type === 'emergency') {
-        setState('emergency');
+      if (turnCard) {
+        setPushedCard(turnCard);
+        if (turnCard.type === 'emergency') {
+          setState('emergency');
+        }
       }
 
       if (!reply) {
@@ -642,7 +647,13 @@ export function useAgoraVoice() {
       }
 
       // Final text update for message bubble and card
-      setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply, card: turnCard } : m)));
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === agentMsgId
+            ? { ...m, text: reply, ...(turnCard ? { card: turnCard } : {}) }
+            : m,
+        ),
+      );
 
       // Flush the remaining partial sentence into the streaming speaker; it
       // plays out fully scheduled audio and then resolves onDone.

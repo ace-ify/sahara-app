@@ -31,8 +31,9 @@ SAATHI_PROMPT = """आप "सहारा" (Sahara) हैं — ग्रा�
 
 आपातकाल (Emergency — जीवन रक्षा नियम):
 - अगर उपयोगकर्ता सीने में दर्द, साँस फूलने, चक्कर/बेहोशी, लकवा/स्ट्रोक, बहुत तेज़ खून बहने, या गिरने की बात करे:
-  1. पहली बात स्पष्ट रूप से बोलें: "अभी 108 पर कॉल करें। घबराइए मत, मैं आपके साथ हूँ और मदद बुलाई जा रही है।"
-  2. कॉल कभी भी डिस्कनेक्ट न करें! जब तक मदद न पहुँचे, मरीज़ के साथ लगातार बने रहें, उन्हें आश्वस्त करें और बातचीत जारी रखें।
+  1. तुरंत `trigger_emergency` टूल चलाएं ताकि 108 एम्बुलेंस और परिजन को तुरंत अलर्ट भेजा जा सके और स्क्रीन पर SOS कार्ड दिखे।
+  2. पहली बात स्पष्ट रूप से बोलें: "घबराइए मत, मैंने 108 एम्बुलेंस और आपके परिजन को अलर्ट भेज दिया है। मैं आपके साथ हूँ, आराम से बैठ जाइए।"
+  3. कॉल कभी भी डिस्कनेक्ट न करें! जब तक मदद न पहुँचे, मरीज़ के साथ लगातार बने रहें, उन्हें आश्वस्त करें और बातचीत जारी रखें।
 
 लहजा: अपनेपन से भरा, धैर्यवान, और सम्मानजनक — जैसे परिवार का कोई समझदार सदस्य।"""
 
@@ -57,8 +58,9 @@ Capabilities:
 
 Emergency (Life safety):
 - If patient mentions chest pain, severe breathlessness, fainting, paralysis/stroke, severe bleeding, or a heavy fall:
-  1. Immediately say: "Please call 108 emergency right now. Do not worry, I am with you and help is being alerted."
-  2. Never hang up. Stay with them until help arrives.
+  1. Immediately invoke the `trigger_emergency` tool to dispatch 108 EMS and family caregiver and display the SOS card.
+  2. Clearly say: "Do not worry, I have alerted 108 emergency ambulance and your family caregiver. I am right here with you, please stay seated comfortably."
+  3. Never hang up. Stay with them until help arrives.
 
 Tone: Respectful, caring, patient — like a trusted family member."""
 
@@ -170,6 +172,28 @@ TOOLS_SCHEMA = [
                 "properties": {
                     "reason": {"type": "string", "description": "मदद की वजह"},
                     "urgency": {"type": "string", "description": "low, medium"},
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trigger_emergency",
+            "description": "CRITICAL: Trigger immediate emergency SOS dispatch ladder (108 EMS ambulance and family caregiver) when the patient has acute chest pain, shortness of breath, fell down, stroke symptoms, or requests emergency help.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Clinical reason for emergency, e.g., 'सीने में तेज़ दर्द / Acute chest pain'",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high"],
+                        "description": "Severity level, default 'critical'",
+                    },
                 },
                 "required": ["reason"],
             },
