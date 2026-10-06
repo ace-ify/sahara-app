@@ -90,14 +90,15 @@ def build_emergency_twiml(patient: str, reason: str, lang: str = "hi") -> str:
 
 
 def build_followup_twiml(patient: str, note: str = "", lang: str = "hi") -> str:
-    """Build doctor follow-up call announcement."""
+    """Build doctor follow-up call announcement spoken by Sahara AI."""
     safe_patient = patient or "नमस्ते"
-    safe_note = f" डॉक्टर का संदेश: {note}।" if note else ""
-    
+    safe_note = f" डॉक्टर का संदेश है: {note}।" if note else ""
+
     if lang == "en":
         announcement = (
-            f"Hello {safe_patient}. This is Sahara Health Companion with your scheduled clinical follow-up.{safe_note} "
-            f"Please open your Sahara companion application to talk to your health assistant."
+            f"Hello {safe_patient}. This is your Sahara AI health companion calling on behalf of your clinic. "
+            f"{safe_note} Please remember to take your scheduled medications and stay hydrated. "
+            f"If you need any medical assistance, open your Sahara app to talk to me directly. Thank you and take care."
         )
         return (
             f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -108,8 +109,10 @@ def build_followup_twiml(patient: str, note: str = "", lang: str = "hi") -> str:
         )
 
     hi_text = (
-        f"नमस्ते {safe_patient}। मैं सहारा क्लिनिक से बोल रही हूँ। आपका डॉक्टर फॉलो-अप शेड्यूल है।{safe_note} "
-        f"कृपया अपने सहारा ऐप को खोलें और अपने स्वास्थ्य साथी से बात करें।"
+        f"नमस्ते {safe_patient} जी! मैं आपकी स्वास्थ्य साथी सहारा एआई बोल रही हूँ। "
+        f"डॉक्टर साहब के कहने पर मैंने आपकी सेहत और दवा की पुष्टि के लिए आपको कॉल किया है।{safe_note} "
+        f"कृपया अपनी निर्धारित दवा समय पर लें। यदि कोई भी परेशानी महसूस हो, तो सहारा ऐप खोलकर मुझसे तुरंत बात कर सकते हैं। "
+        f"अपना ध्यान रखें, धन्यवाद।"
     )
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>'

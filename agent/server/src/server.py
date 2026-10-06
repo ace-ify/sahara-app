@@ -1285,7 +1285,7 @@ class PatientRecord(BaseModel):
 _PATIENTS: Dict[str, Dict[str, Any]] = {
     "pat-naimish": {
         "id": "pat-naimish",
-        "name": "Naimish Patel (28)",
+        "name": "Naimish",
         "caregiver_phone": "+918756260291",
         "phone": "+918756260291",
         "channel": "patient-naimish",
