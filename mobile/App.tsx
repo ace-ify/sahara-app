@@ -19,7 +19,6 @@ import EmergencyScreen from './src/screens/EmergencyScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import CaregiverPairingScreen from './src/screens/CaregiverPairingScreen';
 import CareHistoryScreen from './src/screens/CareHistoryScreen';
-import CaregiverSosScreen from './src/screens/CaregiverSosScreen';
 import PrescriptionScannerScreen from './src/screens/PrescriptionScannerScreen';
 import DoctorSummaryScreen from './src/screens/DoctorSummaryScreen';
 import { GluestackUIProvider } from './components/ui/gluestack-ui-provider';
@@ -92,11 +91,6 @@ function AppContent() {
         <Stack.Screen
           name="Emergency"
           component={EmergencyScreen}
-          options={{ presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="CaregiverSos"
-          component={CaregiverSosScreen}
           options={{ presentation: 'modal' }}
         />
         <Stack.Screen name="Onboarding" component={OnboardingScreen} />

@@ -31,6 +31,7 @@ export default function AdminDashboard() {
   const [patients, setPatients] = useState<AdminPatient[]>([])
   const [calls, setCalls] = useState<FollowupCall[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -59,6 +60,8 @@ export default function AdminDashboard() {
       await registerPatient(name.trim(), phone.trim() || undefined)
       setName('')
       setPhone('')
+      setSuccessMsg(`✓ Added patient ${name.trim()}`)
+      setTimeout(() => setSuccessMsg(null), 5000)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'register failed')
@@ -71,6 +74,8 @@ export default function AdminDashboard() {
     setBusy(patient.id)
     try {
       await startFollowupCall(patient.id)
+      setSuccessMsg(`✓ Calling ${patient.name} (${patient.caregiver_phone || 'phone'}) via Twilio PSTN (+1 682 349 7450)... Phone is ringing!`)
+      setTimeout(() => setSuccessMsg(null), 8000)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'call failed')
@@ -106,6 +111,12 @@ export default function AdminDashboard() {
       </header>
 
       <main className="mx-auto max-w-5xl space-y-8 px-6 py-8">
+        {successMsg && (
+          <div className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+            {successMsg}
+          </div>
+        )}
+
         {error && (
           <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
             {error} — is the Python backend running?
@@ -222,8 +233,7 @@ export default function AdminDashboard() {
         </section>
 
         <p className="text-xs text-slate-400">
-          “Call now” rings the patient&apos;s Sahārā app over the same Agora voice agent — simulated
-          telephony (no PSTN dial-out). Real phone calls need Agora Agent Studio + Elastic SIP Trunk.
+          “Call now” places a live cellular PSTN call via Sahara&apos;s Twilio trunk (+1 682 349 7450) with Polly.Aditi Hindi AI voice, while simultaneously bridging telemetry to this clinical dashboard.
         </p>
       </main>
     </div>
