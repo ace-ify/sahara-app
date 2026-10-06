@@ -158,7 +158,16 @@ async def deltas(payload: dict) -> AsyncGenerator[str, None]:
     1. Groq (primary - low latency)
     2. OpenAI gpt-4o-mini (secondary - if OPENAI_API_KEY is available)
     3. Existing Claude gateway proxy (tertiary / fallback)
+
+    Output passes through the tool-call sanitizer so raw tool syntax the
+    model may imitate from the prompt's tool descriptions never reaches
+    the patient-facing speech/chat stream.
     """
+    async for t in _sanitize_stream(_raw_deltas(payload)):
+        yield t
+
+
+async def _raw_deltas(payload: dict) -> AsyncGenerator[str, None]:
     emitted = False
 
     # 1. Primary: Groq
@@ -201,6 +210,78 @@ async def deltas(payload: dict) -> AsyncGenerator[str, None]:
                 return
 
     yield "माफ़ कीजिए, अभी जवाब देने में थोड़ी दिक्कत है। एक पल में फिर कोशिश करें।"
+
+
+# ---------------------------------------------------------------------------
+# Tool-call sanitizer — keeps raw tool syntax out of patient-facing speech.
+# The prompt describes tools in prose; LLMs sometimes *imitate* tool-call
+# syntax ({"name": "...", "arguments": {...}} / <|tool▁calls▁begin|> etc.) in
+# their answer. That text was being spoken and shown verbatim. Stripping it
+# here, on the shared delta path, covers all three LLM backends at once.
+# ponytail: single buffer-and-flush state machine; if a sanitizer is ever
+# needed per-backend, move it then — one consumer today.
+# ---------------------------------------------------------------------------
+import re as _re
+
+_HOLD_CAP = 400  # ponytail: hard cap — prose containing '{' or '<' flushes raw
+
+
+def _sanitize_text_once(text: str) -> str:
+    """Strip complete tool-call syntax blocks from a text chunk."""
+    # Remove proprietary tool-call blocks (Hermes/Qwen style), dot-tolerant.
+    text = _re.sub(r"<\|tool▁calls▁begin\|>.*?<\|tool▁calls▁end\|>", "", text, flags=_re.S)
+    text = _re.sub(r"<\|tool▁call▁begin\|>.*?<\|tool▁call▁end\|>", "", text, flags=_re.S)
+    # Remove a JSON-looking tool call (one nesting level for arguments).
+    def _json_tool(match: "_re.Match[str]") -> str:
+        body = match.group(0)
+        if '"name"' in body and ('"arguments"' in body or '"parameters"' in body):
+            return ""
+        return body
+    text = _re.sub(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", _json_tool, text)
+    return text
+
+
+def _safe_cut(hold: str) -> int:
+    """Longest prefix of `hold` that is safe to emit: all braces closed and
+    no '<' (a possible tool-block marker, complete or still forming)."""
+    depth = 0
+    cut = 0
+    for i, c in enumerate(hold):
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            if depth > 0:
+                depth -= 1
+                if depth == 0:
+                    cut = i + 1
+        elif c == '<':
+            return cut
+    if depth == 0:
+        cut = len(hold)
+    return cut
+
+
+async def _sanitize_stream(src: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    """Buffer deltas so tool-call syntax split across chunks is still caught;
+    emit only clean text. Never emits past an unclosed '{' or a '<'."""
+    hold = ""
+    async for delta in src:
+        hold += delta
+        while hold:
+            if len(hold) > _HOLD_CAP:
+                emit, hold = hold, ""
+            else:
+                cut = _safe_cut(hold)
+                if cut == 0:
+                    break
+                emit, hold = hold[:cut], hold[cut:]
+            cleaned = _sanitize_text_once(emit)
+            if cleaned:
+                yield cleaned
+    # Final flush at end-of-stream (nothing can straddle anymore).
+    cleaned = _sanitize_text_once(hold)
+    if cleaned:
+        yield cleaned
 
 
 def _chunk(content: str | None = None, finish: str | None = None, model: str | None = None) -> str:
