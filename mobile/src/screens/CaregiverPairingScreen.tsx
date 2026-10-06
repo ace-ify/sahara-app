@@ -157,17 +157,13 @@ export default function CaregiverPairingScreen() {
     });
   };
 
-  const handleJoin3WayAgora = () => {
-    nav.navigate('CaregiverSos', { channel: `sahara-room-${Date.now()}` });
-  };
-
   return (
     <Screen
       title={lang === 'hi' ? 'परिवार मंडल व केयरगिवर' : 'Family Circle & Caregiver'}
       subtitle={
         lang === 'hi'
-          ? 'लाइव मॉनिटरिंग · WhatsApp अपडेट · 3-तरफ़ा ऑडियो'
-          : 'Live telemetry · WhatsApp updates · 3-way Agora call'
+          ? 'लाइव मॉनिटरिंग · WhatsApp अपडेट · आपातकालीन संपर्क'
+          : 'Live telemetry · WhatsApp updates · Emergency contact'
       }
     >
       {/* Segmented Mode Selector */}
@@ -331,20 +327,16 @@ export default function CaregiverPairingScreen() {
                     big
                     onPress={handleSendWhatsAppUpdate}
                   />
-                  <View style={{ flexDirection: 'row', gap: space.sm }}>
-                    <Button
-                      label={lang === 'hi' ? '📞 सीधा फ़ोन' : '📞 Call Family'}
-                      variant="outline"
-                      style={{ flex: 1 }}
-                      onPress={handleCallCaregiver}
-                    />
-                    <Button
-                      label={lang === 'hi' ? '🎙️ 3-तरफ़ा लाइव ऑडियो' : '🎙️ 3-Way Agora Audio'}
-                      variant="outline"
-                      style={{ flex: 1 }}
-                      onPress={handleJoin3WayAgora}
-                    />
-                  </View>
+                  <Button
+                    label={
+                      lang === 'hi'
+                        ? `📞 केयरगिवर को कॉल करें (${caregiver.phone})`
+                        : `📞 Call Caregiver (${caregiver.phone})`
+                    }
+                    variant="outline"
+                    big
+                    onPress={handleCallCaregiver}
+                  />
                 </View>
               </>
             )}
