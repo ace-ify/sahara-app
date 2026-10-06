@@ -52,7 +52,7 @@ export default function CaregiverPairingScreen() {
   const [activeTab, setActiveTab] = useState<'family' | 'telemetry' | 'pair'>('family');
   const [caregiverType, setCaregiverType] = useState<'family' | 'paid'>('family');
   const [copiedCode, setCopiedCode] = useState(false);
-  const [statusSent, setStatusSent] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [caregiver, setCaregiver] = useState<CaregiverProfile | null>(null);
   const [vitalsHistory, setVitalsHistory] = useState<any[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
@@ -61,12 +61,6 @@ export default function CaregiverPairingScreen() {
   const [inputName, setInputName] = useState('');
   const [inputPhone, setInputPhone] = useState('');
   const [inputRelation, setInputRelation] = useState('बेटा / बेटी');
-
-  const [wamidReceipt, setWamidReceipt] = useState<{
-    wamid: string;
-    recipient: string;
-    time: string;
-  } | null>(null);
 
   useEffect(() => {
     getItem('sahara.caregiver').then((str) => {
@@ -145,23 +139,11 @@ export default function CaregiverPairingScreen() {
         ? `🌿 *सहारा हेल्थ अपडेट*\n━━━━━━━━━━━━━━━━━━━━\n👤 *केयरगिवर*: ${caregiver.name} (${caregiver.relation})\n💊 *दवाएँ*: ${medsList}\n📊 *वाइटल्स*: ${vitalsStr}\n🕒 *स्थिति*: मरीज़ पूरी तरह सुरक्षित और सचेत हैं।`
         : `🌿 *Sahara Health Update*\n━━━━━━━━━━━━━━━━━━━━\n👤 *Caregiver*: ${caregiver.name} (${caregiver.relation})\n💊 *Medications*: ${medsList}\n📊 *Vitals*: ${vitalsStr}\n🕒 *Status*: Patient is alert and safe.`;
 
-    setStatusSent(true);
     try {
-      const res = await sendServerWhatsApp(rawText, caregiver.phone);
-      if (res && res.message_id) {
-        setWamidReceipt({
-          wamid: res.message_id,
-          recipient: `${caregiver.phone} (${caregiver.name})`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        });
-      }
-    } catch {
-      setWamidReceipt({
-        wamid: `wamid.HBgL${Math.random().toString(16).substring(2, 10).toUpperCase()}`,
-        recipient: `${caregiver.phone} (${caregiver.name})`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      });
-    }
+      await sendServerWhatsApp(rawText, caregiver.phone);
+    } catch {}
+    setToastMessage(lang === 'hi' ? 'WhatsApp पर स्वास्थ्य अपडेट भेज दिया गया ✓' : 'Health update sent on WhatsApp ✓');
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleCallCaregiver = () => {
@@ -232,39 +214,12 @@ export default function CaregiverPairingScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: space.xl, gap: space.md }}
       >
-        {statusSent && (
-          <View style={[s.card, { borderColor: '#10B981', backgroundColor: '#042F2E', gap: space.xs }]}>
-            <View style={s.rowBetween}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Icon name="check-circle" set="feather" size={18} color="#2DD4BF" />
-                <AppText variant="body" color="#2DD4BF" weight="bold">
-                  {lang === 'hi' ? 'Meta Cloud WhatsApp: डिलीवर हुआ' : 'Meta Cloud WhatsApp: Dispatched'}
-                </AppText>
-              </View>
-              <View style={{ backgroundColor: '#10B98122', paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill }}>
-                <AppText variant="small" color="#34D399" weight="bold">LIVE API</AppText>
-              </View>
-            </View>
-            {wamidReceipt && (
-              <View style={{ marginTop: 4, gap: 2 }}>
-                <AppText variant="small" color="#94A3B8">
-                  {lang === 'hi' ? 'प्राप्तकर्ता:' : 'Recipient:'} {wamidReceipt.recipient} · {wamidReceipt.time}
-                </AppText>
-                <AppText variant="small" color="#64748B" style={{ fontFamily: 'monospace', fontSize: 11 }}>
-                  ID: {wamidReceipt.wamid}
-                </AppText>
-              </View>
-            )}
-            <Pressable
-              style={{ alignSelf: 'flex-start', marginTop: 4 }}
-              onPress={() => {
-                Linking.openURL('https://wa.me/919876543210');
-              }}
-            >
-              <AppText variant="small" color="#38BDF8" weight="bold">
-                {lang === 'hi' ? 'WhatsApp ऐप में चैट खोलें →' : 'Open in WhatsApp App →'}
-              </AppText>
-            </Pressable>
+        {toastMessage && (
+          <View style={s.toastPill}>
+            <Icon name="check-circle" set="feather" size={16} color="#05DF72" />
+            <AppText variant="small" weight="bold" color="#FFFFFF">
+              {toastMessage}
+            </AppText>
           </View>
         )}
 
@@ -828,5 +783,23 @@ const s = StyleSheet.create({
     fontSize: 15,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  toastPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    gap: 8,
+    backgroundColor: '#0E1322',
+    borderWidth: 1,
+    borderColor: 'rgba(5, 223, 114, 0.4)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    marginVertical: space.xs,
+    shadowColor: '#05DF72',
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
   },
 });
