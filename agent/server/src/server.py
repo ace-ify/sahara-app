@@ -8,6 +8,7 @@ HTTP APIs:
 - POST /stopAgent      -> Agent.stop()
 """
 import asyncio
+import base64
 import datetime
 import json
 import logging
@@ -1024,49 +1025,58 @@ def get_murf_client() -> httpx.AsyncClient:
 
 @router.post("/api/tts")
 async def tts_endpoint(req: TtsRequest):
-    """Synthesize text with Murf and return a playable MP3 URL."""
+    """Synthesize text with Murf Falcon streaming API (Pooja voice)."""
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
+
+    cache_key = f"pooja:{text}"
+    if cache_key in _tts_cache:
+        logger.info("TTS CACHE HIT for '%s'", text)
+        return _tts_cache[cache_key]
 
     murf_key = os.getenv("MURF_API_KEY", "") or MURF_API_KEY
     if not murf_key:
         raise HTTPException(status_code=503, detail="MURF_API_KEY not configured on server")
 
-    cache_key = f"ayushi:{text}"
-    logger.info("TTS hit check: '%s' in cache? %s (cache size=%d)", text, cache_key in _tts_cache, len(_tts_cache))
-    if cache_key in _tts_cache:
-        logger.info("TTS CACHE HIT for '%s'", text)
-        return _tts_cache[cache_key]
-
-    voice_id = "hi-IN-ayushi"
-    locale = "hi-IN"
-
-    body = {
+    payload = {
         "text": text[:2000],
-        "voiceId": voice_id,
-        "locale": locale,
-        "format": "MP3",
+        "voice_id": "Pooja",
+        "style": "Conversational",
+        "model": "Falcon",
+        "multiNativeLocale": "hi-IN",
     }
     client = get_murf_client()
     try:
-        res = await client.post(
-            "https://api.murf.ai/v1/speech/generate",
-            headers={"api-key": murf_key, "Content-Type": "application/json"},
-            json=body,
-        )
-        if res.status_code != 200:
-            logger.warning("Murf TTS failed status=%s body=%s", res.status_code, res.text[:300])
-            raise HTTPException(status_code=502, detail=f"Murf TTS failed: {res.text[:200]}")
-        data = res.json()
-        audio_url = data.get("audioFile") or data.get("audio_url") or ""
-        if not audio_url:
-            raise HTTPException(status_code=502, detail="Murf returned no audioFile")
+        endpoints = [
+            "https://in.api.murf.ai/v1/speech/stream",
+            "https://global.api.murf.ai/v1/speech/stream",
+        ]
+        res = None
+        for ep in endpoints:
+            try:
+                r = await client.post(
+                    ep,
+                    headers={"api-key": murf_key, "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if r.status_code == 200 and r.content:
+                    res = r
+                    break
+            except Exception as e:
+                logger.warning("Murf Falcon endpoint %s failed: %s", ep, e)
+
+        if not res or res.status_code != 200:
+            logger.warning("Murf Falcon TTS failed status=%s", getattr(res, "status_code", None))
+            raise HTTPException(status_code=502, detail="Murf Falcon TTS failed")
+
+        b64_audio = base64.b64encode(res.content).decode("utf-8")
+        data_uri = f"data:audio/wav;base64,{b64_audio}"
         result = {
             "status": "success",
-            "audio_url": audio_url,
-            "audioFile": audio_url,
-            "audio_length": data.get("audioLengthInSeconds"),
+            "audio_url": data_uri,
+            "audioFile": data_uri,
+            "audio_length": len(res.content) / (24000 * 2),
         }
         if len(_tts_cache) < 300:
             _tts_cache[cache_key] = result
@@ -1074,7 +1084,7 @@ async def tts_endpoint(req: TtsRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Murf TTS request error")
+        logger.exception("Murf Falcon TTS request error")
         raise HTTPException(status_code=502, detail=f"TTS error: {e}")
 
 

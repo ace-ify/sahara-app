@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Modal, Pressable, Animated } from 'react-native';
+import { View, StyleSheet, Modal, Animated } from 'react-native';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { Icon } from './Icon';
@@ -77,7 +77,7 @@ export function FallAlertOverlay({ channelName }: { channelName: string | null }
     setEscalating(false);
   };
 
-  // PROTOTYPE demo path: shake detection feed stays identical to a real fall.
+  // Real accelerometer fall detection: free-fall → impact → "Are you okay?".
   useFallDetection(handleFall, true);
 
   useEffect(() => {
@@ -94,27 +94,8 @@ export function FallAlertOverlay({ channelName }: { channelName: string | null }
 
   useEffect(() => clearTimers, []);
 
-  // Demo button while NOT in a fall cycle: simulates the jolt for judging.
-  const demoTrigger = () => handleFall();
-
   return (
     <>
-      {/* Persistent tiny demo chip — labeled PROTOTYPE so nobody mistakes it
-          for a real event. Long-press for the real accelerometer flow. */}
-      {!visible && (
-        <Pressable
-          style={s.demoChip}
-          onPress={demoTrigger}
-          accessibilityLabel="Demo fall detection"
-          accessibilityRole="button"
-        >
-          <Icon name="activity" set="feather" size={12} color="#F59E0B" />
-          <AppText variant="small" weight="bold" color="#F59E0B" style={{ fontSize: 10 }}>
-            {lang === 'hi' ? 'गिरना डेमो (प्रोटोटाइप)' : 'FALL DEMO (PROTOTYPE)'}
-          </AppText>
-        </Pressable>
-      )}
-
       <Modal visible={visible} transparent animationType="fade" onRequestClose={handleImOkay}>
         <View style={s.backdrop}>
           <Animated.View style={[s.card, { transform: [{ scale: pulse }] }]}>
@@ -192,20 +173,5 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: space.md,
-  },
-  demoChip: {
-    position: 'absolute',
-    bottom: 2,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: 'rgba(245, 158, 11, 0.14)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.4)',
-    zIndex: 5,
   },
 });

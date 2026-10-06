@@ -271,17 +271,20 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
       const rec = new SR();
       rec.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
       rec.continuous = true;
-      rec.interimResults = true;
-      let finalText = '';
       rec.onresult = (event: any) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; i += 1) {
-          const chunk = event.results[i][0]?.transcript || '';
-          if (event.results[i].isFinal) finalText += `${chunk} `;
-          else interim += chunk;
+        let finalStr = '';
+        let interimStr = '';
+        for (let i = 0; i < event.results.length; i += 1) {
+          const res = event.results[i];
+          const chunk = res[0]?.transcript || '';
+          if (res.isFinal) {
+            finalStr += `${chunk} `;
+          } else {
+            interimStr += chunk;
+          }
         }
-        const live = `${finalText}${interim}`.replace(/\s+/g, ' ');
-        if (live.trim()) onResultRef.current(live.trim(), true);
+        const live = `${finalStr}${interimStr}`.replace(/\s+/g, ' ').trim();
+        if (live) onResultRef.current(live, true);
       };
       rec.onspeechstart = () => onLevelRef.current?.(0.55);
       rec.onaudiostart = () => onLevelRef.current?.(0.25);

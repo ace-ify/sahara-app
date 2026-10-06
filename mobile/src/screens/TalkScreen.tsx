@@ -190,7 +190,7 @@ export default function TalkScreen() {
         // short silence so hands-free turns still send.
         voiceTurnLiveRef.current = true;
         if (silenceTimer.current) clearTimeout(silenceTimer.current);
-        silenceTimer.current = setTimeout(commitVoiceTurn, 1500);
+        silenceTimer.current = setTimeout(commitVoiceTurn, 650);
         return;
       }
       // Native final transcript — commit immediately.
@@ -203,19 +203,10 @@ export default function TalkScreen() {
       setInputText(text);
       return;
     }
-    // Native final transcript — type it into the input with a typewriter animation.
+    // Final transcript — update input immediately (zero artificial typing delay)
     if (typingRef.current) clearInterval(typingRef.current);
-    let idx = 0;
-    setInputText('');
-    typingRef.current = setInterval(() => {
-      if (idx < text.length) {
-        idx += 1;
-        setInputText(text.slice(0, idx));
-      } else {
-        clearInterval(typingRef.current);
-        typingRef.current = null;
-      }
-    }, 24);
+    inputTextRef.current = text;
+    setInputText(text);
   }, [commitVoiceTurn]);
 
   const dictation = useDictation(lang, showDictationResult, { onLevel: setCaptureLevel });
@@ -247,6 +238,12 @@ export default function TalkScreen() {
     if (!isVoiceLoop || state !== 'listening' || muted) return;
     if (dictation.phase !== 'idle') return;
     if (dictation.error) return;
+    // CRITICAL (Mobile fix): If there is pending spoken text when recognition
+    // drops to idle, commit it immediately instead of wiping it with setInputText('')!
+    if (inputTextRef.current.trim()) {
+      commitVoiceTurn();
+      return;
+    }
     const id = setTimeout(() => {
       if (typingRef.current) {
         clearInterval(typingRef.current);
@@ -255,6 +252,7 @@ export default function TalkScreen() {
       voiceTurnRef.current = true;
       dictation.setVoiceTurn(true);
       setInputText('');
+      inputTextRef.current = '';
       dictation.start();
     }, 500);
     return () => clearTimeout(id);
