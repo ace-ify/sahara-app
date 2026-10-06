@@ -952,17 +952,64 @@ def _search_nominatim_live(
                             "directions_url": directions_url,
                             "map_url": map_url,
                             "static_map_url": static_map,
-                            "phone": "+91 98765 43210 (हेल्पलाइन)",
-                            "timings": "सुबह 9:00 से रात 8:00 बजे",
-                            "services": ["आपातकालीन परामर्श", "दवा वितरण", "प्राथमिक जांच"],
+                            # Live OSM hits carry no verified phone/hours — the
+                            # UI shows a map/call-108 path instead of fake data.
+                            "phone": "108",
+                            "timings": "OSM लाइव डेटा — Google Maps पर सत्यापित करें",
+                            "services": ["लाइव नक्शा परिणाम"],
                             "open_now": True,
-                            "ayushman_empaneled": True,
+                            "ayushman_empaneled": False,
                             "emergency_ready": f_type == "hospital",
                         })
                     if results:
                         break
         except Exception as e:
             logger.warning("Nominatim live lookup skipped (%s)", e)
+
+    # Overpass fallback: real amenity=pharmacy nodes tagged Jan Aushadhi / PMBJP
+    # around the user's GPS when Nominatim found nothing for a pharmacy search.
+    if not results and facility_type == "pharmacy" and user_lat is not None and user_lon is not None and abs(user_lat) > 0.1:
+        try:
+            radius_m = 5000
+            overpass_q = (
+                f"[out:json][timeout:6];"
+                f"nwr[amenity=pharmacy](around:{radius_m},{user_lat:.5f},{user_lon:.5f})"
+                f"['operator'~'Jan Aushadhi|PMBJP|Janaushadhi|Generic',i];"
+                f"out center {limit};"
+            )
+            with httpx.Client(timeout=7.0) as client:
+                res = client.post("https://overpass-api.de/api/interpreter", data={"data": overpass_q}, headers={"User-Agent": headers["User-Agent"]})
+                if res.status_code == 200:
+                    for el in res.json().get("elements", []):
+                        lat = el.get("center", {}).get("lat") or el.get("lat") or 0.0
+                        lon = el.get("center", {}).get("lon") or el.get("lon") or 0.0
+                        if not lat or not lon:
+                            continue
+                        tags = el.get("tags", {}) or {}
+                        name = tags.get("name") or "जन औषधि केंद्र"
+                        dist = _haversine_distance(user_lat, user_lon, lat, lon)
+                        results.append({
+                            "id": f"osm-ja-{el.get('id', int(time.time()))}",
+                            "name": name,
+                            "type": "pharmacy",
+                            "distance_km": dist,
+                            "travel_time": f"{max(3, int(dist * 3.2))} मिनट (गाड़ी से)",
+                            "address": tags.get("addr:street") or tags.get("operator") or "OpenStreetMap लाइव परिणाम",
+                            "latitude": lat,
+                            "longitude": lon,
+                            "directions_url": f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=driving",
+                            "map_url": f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(name)}",
+                            "phone": tags.get("phone") or tags.get("contact:phone") or "108",
+                            "timings": tags.get("opening_hours") or "Google Maps पर सत्यापित करें",
+                            "services": ["जन औषधि (सस्ती जेनेरिक दवाएं)"],
+                            "open_now": True,
+                            "ayushman_empaneled": False,
+                            "emergency_ready": False,
+                        })
+            if results:
+                logger.info("Overpass Jan Aushadhi fallback found %d stores", len(results))
+        except Exception as e:
+            logger.warning("Overpass Jan Aushadhi fallback skipped (%s)", e)
 
     return results
 
@@ -1547,9 +1594,9 @@ def get_reminders() -> Dict[str, Any]:
 
 def escalate_to_caregiver(reason: str, urgency: str = "medium") -> Dict[str, Any]:
     """Notify family caregiver about assistance need via WhatsApp deep link + Direct Voice Call (NO SMS)."""
-    caregiver_name = "रमेश (बेटा / Caregiver)"
-    caregiver_phone = "+919876500001"
-    clean_phone = "919876500001"
+    caregiver_name = "Naimish (Caregiver)"
+    caregiver_phone = os.getenv("CAREGIVER_PHONE", "+918756260291")
+    clean_phone = caregiver_phone.replace("+", "").replace(" ", "").replace("-", "")
 
     ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     now_ist = datetime.datetime.now(ist_tz).strftime("%I:%M %p, %d %b %Y")

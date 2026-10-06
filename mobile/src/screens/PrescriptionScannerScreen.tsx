@@ -798,6 +798,35 @@ export default function PrescriptionScannerScreen() {
                     </AppText>
                   </View>
 
+                  {/* Real Jan Aushadhi savings (cross-referenced server-side against the PMBJP dataset) */}
+                  {item.janAushadhiGeneric ? (
+                    <View style={s.jaSavingsRow}>
+                      <View style={[s.jaPriceChip, s.jaPriceChipBrand]}>
+                        <AppText variant="small" color={colors.textMuted} style={{ fontSize: 10 }}>
+                          ब्रांडेड
+                        </AppText>
+                        <AppText variant="label" weight="bold" color={colors.white} style={{ fontSize: 12 }}>
+                          {item.janAushadhiGeneric.brandedMRP}
+                        </AppText>
+                      </View>
+                      <View style={[s.jaPriceChip, s.jaPriceChipGeneric]}>
+                        <AppText variant="small" color={colors.brand} style={{ fontSize: 10 }}>
+                          जन औषधि
+                        </AppText>
+                        <AppText variant="label" weight="bold" color={colors.brand} style={{ fontSize: 12 }}>
+                          {item.janAushadhiGeneric.genericPrice}
+                        </AppText>
+                      </View>
+                      {item.janAushadhiGeneric.savingsPct && item.janAushadhiGeneric.savingsPct !== '—' ? (
+                        <View style={s.jaSavingsChip}>
+                          <AppText variant="small" weight="bold" color={colors.brand} style={{ fontSize: 10 }}>
+                            {item.janAushadhiGeneric.savingsPct} बचत ✓
+                          </AppText>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+
                   {/* Actions */}
                   <View style={s.cardActions}>
                     <Pressable
@@ -1177,6 +1206,38 @@ const s = StyleSheet.create({
     marginTop: space.sm,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  jaSavingsRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 6,
+    marginTop: space.sm,
+  },
+  jaPriceChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    alignItems: 'center',
+    gap: 1,
+  },
+  jaPriceChipBrand: {
+    borderColor: 'rgba(255, 255, 255, 0.10)',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+  },
+  jaPriceChipGeneric: {
+    borderColor: 'rgba(5, 223, 114, 0.35)',
+    backgroundColor: 'rgba(5, 223, 114, 0.10)',
+  },
+  jaSavingsChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(5, 223, 114, 0.40)',
+    backgroundColor: 'rgba(5, 223, 114, 0.12)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   conflictBanner: {
     flexDirection: 'row',

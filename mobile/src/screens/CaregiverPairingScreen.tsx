@@ -492,7 +492,7 @@ export default function CaregiverPairingScreen() {
                 />
                 <TextInput
                   style={s.formInput}
-                  placeholder={lang === 'hi' ? 'फ़ोन / WhatsApp नंबर (उदा. 9876543210)' : 'Phone / WhatsApp (e.g. 9876543210)'}
+                  placeholder={lang === 'hi' ? 'फ़ोन / WhatsApp नंबर (उदा. 8756260291)' : 'Phone / WhatsApp (e.g. 8756260291)'}
                   placeholderTextColor={colors.textMuted}
                   value={inputPhone}
                   onChangeText={setInputPhone}

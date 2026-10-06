@@ -37,7 +37,7 @@ class WhatsAppClient:
         token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         api_version: str = "v19.0",
-        default_recipient: str = "+919876543210",
+        default_recipient: str = "+918756260291",
         openwa_url: Optional[str] = None,
         openwa_key: Optional[str] = None,
         openwa_session: Optional[str] = None,
@@ -218,9 +218,9 @@ class WhatsAppClient:
             f"✓ Pre-arrival coaching active (Fowler's position)\n"
             f"✓ Continuous voice lifeline never disconnects\n\n"
             f"👉 *Immediate Family Actions*:\n"
-            f"1. Call 108 to confirm physical entry.\n"
-            f"2. Unlock front door for paramedics.\n"
-            f"3. Join senior's live Agora call: https://agoracare.vercel.app or Saahara Mobile."
+            f"1. Call 108 to confirm ambulance entry.\n"
+            f"2. Unlock front door for incoming paramedics.\n"
+            f"3. Sahara AI voice lifeline remains active with the patient."
         )
 
         return await self.send_text(to=to, text=body)

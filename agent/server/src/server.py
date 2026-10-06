@@ -398,7 +398,7 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
         # Parallel Dispatch: Contact 0 (Caregiver) + Contact 1 (108 EMS) fire concurrently at t=0
         chat_patient = (payload.get("patient") or "").strip() or "मरीज़"
         chat_caregiver_phone = (payload.get("caregiver_phone") or "").strip() or os.getenv(
-            "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210")
+            "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
         )
         contacts = [
             emergency.Contact(name=f"{chat_patient} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=chat_caregiver_phone),
@@ -838,7 +838,7 @@ class TriggerEmergencyRequest(BaseModel):
 async def trigger_emergency(req: TriggerEmergencyRequest):
     """Trigger the multi-contact parallel emergency dispatch ladder without disconnecting the call."""
     caregiver_phone = (req.caregiver_phone or "").strip() or os.getenv(
-        "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210")
+        "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
     )
     patient_name = (req.patient or "").strip() or "मरीज़"
     contacts = [
@@ -1298,8 +1298,8 @@ _PATIENTS: Dict[str, Dict[str, Any]] = {
     "pat-ramprasad": {
         "id": "pat-ramprasad",
         "name": "Ramprasad Sharma (72)",
-        "caregiver_phone": "+919876543210",
-        "phone": "+919876543210",
+        "caregiver_phone": "+918756260291",
+        "phone": "+918756260291",
         "channel": "emergency-live",
         "default_risk": {
             "level": "red",

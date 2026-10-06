@@ -192,7 +192,7 @@ export default function DoctorSummaryScreen() {
           variant="outline"
           onPress={() => {
             triggerTwilioCall({
-              to: caregiverPhone || '+919876543210',
+              to: caregiverPhone || '+918756260291',
               patient: userName || 'मरीज़',
               kind: 'followup',
               note: 'डॉक्टर सारांश समीक्षा व फॉलो-अप',
