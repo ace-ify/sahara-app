@@ -861,3 +861,60 @@ export async function getEmergencySbar(channel: string): Promise<{
   };
 }
 
+// --- Outbound Twilio Calling & WhatsApp Gateway Status ---
+
+export async function triggerTwilioCall(options: {
+  to: string;
+  patient?: string;
+  kind?: 'emergency' | 'followup' | 'fall';
+  reason?: string;
+  note?: string;
+  lang?: string;
+}): Promise<{
+  status: string;
+  simulated?: boolean;
+  call_sid?: string;
+  to?: string;
+  from?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetchWithTimeout(
+      `${getBackendBaseUrl()}/api/twilio/call`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      },
+      4000,
+    );
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('[twilio] call dispatch error:', err);
+  }
+  return { status: 'offline', simulated: true };
+}
+
+export async function getWhatsAppGatewayStatus(): Promise<{
+  status: string;
+  openwa_gateway?: {
+    url: string;
+    ready: boolean;
+    session_id: string;
+    dashboard_url: string;
+  };
+  meta_cloud_api?: { configured: boolean };
+  twilio_voice?: {
+    from_number: string;
+    live_configured: boolean;
+    sip_trunk: string;
+  };
+}> {
+  try {
+    const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/whatsapp/status`, {}, 3000);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[whatsapp] status unreachable:', err);
+  }
+  return { status: 'offline' };
+}

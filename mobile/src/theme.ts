@@ -3,59 +3,61 @@
 // Devanagari-safe typography (Noto Sans / Noto Serif Devanagari).
 
 export const colors = {
-  // canvas / surfaces (Ethereal Medical Dark OLED Obsidian)
-  bg: '#05070A',                 // deep OLED obsidian canvas
-  surface: '#0E131F',            // deep clinical surface
-  surfaceWarm: '#131929',        // subtle secondary elevated surface
-  surfaceContainer: '#172033',   // container surface
-  surfaceHigh: '#1E293B',        // composer + icon circles
-  border: '#1E293B',             // refined hairline border
-  borderSubtle: 'rgba(255, 255, 255, 0.08)',
+  // canvas / surfaces (Ethereal Clinical OLED Obsidian)
+  bg: '#06080D',                 // Deep OLED obsidian canvas
+  surface: '#0E1322',            // Clinical obsidian surface
+  surfaceWarm: '#13192B',        // Elevated secondary clinical card
+  surfaceContainer: '#172036',   // Surface container for nested groups
+  surfaceHigh: '#1E2942',        // Interactive button & chip surface
+  border: 'rgba(255, 255, 255, 0.08)', // Ultra-refined hairline border
+  borderSubtle: 'rgba(255, 255, 255, 0.05)',
+  borderActive: 'rgba(16, 185, 129, 0.35)',
   outline: '#64748B',
-  text: '#F8FAFC',               // crisp white-slate text
-  textMuted: '#94A3B8',          // high-readability secondary text
-  textDim: '#64748B',
+  text: '#F8FAFC',               // Crisp white-slate primary text
+  textMuted: '#94A3B8',          // Balanced secondary clinical text
+  textDim: '#64748B',            // Tertiary muted caption text
 
-  // brand: Bioluminescent Emerald + Electric Cyan
-  brand: '#10B981',              // luminous clinical emerald
-  brandDeep: '#059669',
-  brandTint: 'rgba(16, 185, 129, 0.14)',
-  onBrand: '#FFFFFF',
+  // brand: Bioluminescent Precision Emerald
+  brand: '#05DF72',              // Luminous high-contrast clinical emerald
+  brandDeep: '#10B981',
+  brandTint: 'rgba(5, 223, 114, 0.12)',
+  onBrand: '#000000',
   teal: '#10B981',
   tealDeep: '#059669',
   tealDark: '#34D399',
   tealTint: 'rgba(16, 185, 129, 0.14)',
   cyan: '#06B6D4',
   cyanTint: 'rgba(6, 182, 212, 0.14)',
-  green: '#10B981',
+  green: '#05DF72',
   saffron: '#F59E0B',
 
-  // emergency (isolated high-visibility crimson)
+  // emergency (isolated high-visibility crimson - strictly reserved for alerts)
   danger: '#EF4444',
   dangerDeep: '#DC2626',
   dangerDark: '#991B1B',
-  dangerTint: 'rgba(239, 68, 68, 0.18)',
+  dangerTint: 'rgba(239, 68, 68, 0.16)',
+  dangerBright: '#F87171',
 
-  // status
-  success: '#10B981',
-  successTint: 'rgba(16, 185, 129, 0.14)',
+  // status & utility
+  success: '#05DF72',
+  successTint: 'rgba(5, 223, 114, 0.12)',
   warn: '#F59E0B',
   warnTint: 'rgba(245, 158, 11, 0.14)',
   white: '#FFFFFF',
   black: '#000000',
-  dangerBright: '#F87171',
   brandSecondary: '#06B6D4',
 
   // chat-specific tokens
-  chatBg: '#05070A',
-  composer: '#0E131F',
-  iconBtn: '#1E293B',
-  bubbleUser: 'rgba(16, 185, 129, 0.20)',
-  bubbleUserText: '#ECFDF5',
-  accent: '#10B981',
-  orbTop: '#34D399',
+  chatBg: '#06080D',
+  composer: '#0E1322',
+  iconBtn: '#1E2942',
+  bubbleUser: 'rgba(5, 223, 114, 0.15)',
+  bubbleUserText: '#F0FDF4',
+  bubbleUserBorder: 'rgba(5, 223, 114, 0.28)',
+  accent: '#05DF72',
+  orbTop: '#05DF72',
   orbMid: '#06B6D4',
-  orbBottom: '#0E7490',
+  orbBottom: '#0284C7',
 } as const;
 
 // variants whose headlines render in SERIF (editorial voice); rest are sans.

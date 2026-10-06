@@ -26,6 +26,11 @@ logger = logging.getLogger("uvicorn.error")
 META_WA_BASE_URL = "https://graph.facebook.com"
 
 
+OPENWA_DEFAULT_URL = os.getenv("OPENWA_BASE_URL", "http://127.0.0.1:2785")
+OPENWA_DEFAULT_KEY = os.getenv("OPENWA_API_KEY", "owa_k1_03aa50c4c0fa183891054322cdadfd114a7a8ed732604f82ee8c5a936ec1c81d")
+OPENWA_DEFAULT_SESSION = os.getenv("OPENWA_SESSION_ID", "b788a1e0-bf55-40d4-a70d-72d8a39f97cc")
+
+
 class WhatsAppClient:
     def __init__(
         self,
@@ -33,6 +38,9 @@ class WhatsAppClient:
         phone_number_id: Optional[str] = None,
         api_version: str = "v19.0",
         default_recipient: str = "+919876543210",
+        openwa_url: Optional[str] = None,
+        openwa_key: Optional[str] = None,
+        openwa_session: Optional[str] = None,
     ):
         self.token = token or os.getenv("WHATSAPP_TOKEN") or os.getenv("META_WA_TOKEN") or ""
         self.phone_number_id = (
@@ -47,11 +55,17 @@ class WhatsAppClient:
             or os.getenv("CAREGIVER_PHONE")
             or default_recipient
         )
-        self.is_live = bool(self.token and self.phone_number_id)
-        if self.is_live:
-            logger.info("WhatsApp Cloud API initialized in LIVE mode (PhoneID: %s)", self.phone_number_id)
-        else:
-            logger.info("WhatsApp Cloud API initialized in SIMULATION/DEMO mode (no credentials provided)")
+        self.openwa_url = (openwa_url or OPENWA_DEFAULT_URL).rstrip("/")
+        self.openwa_key = openwa_key or OPENWA_DEFAULT_KEY
+        self.openwa_session = openwa_session or OPENWA_DEFAULT_SESSION
+
+        self.is_meta_live = bool(self.token and self.phone_number_id)
+        logger.info(
+            "WhatsAppClient initialized. OpenWA Gateway: %s (session: %s), Meta Cloud API Live: %s",
+            self.openwa_url,
+            self.openwa_session[:8],
+            self.is_meta_live,
+        )
 
     @property
     def endpoint_url(self) -> str:
@@ -63,11 +77,45 @@ class WhatsAppClient:
         text: str,
         preview_url: bool = True,
     ) -> Dict[str, Any]:
-        """Send a free-form WhatsApp text message via Meta Cloud API."""
+        """Send a free-form WhatsApp text message via OpenWA or Meta Cloud API."""
         recipient = (to or self.default_recipient).replace(" ", "").replace("-", "")
         if not recipient.startswith("+"):
             recipient = f"+{recipient}"
 
+        # 1. Primary: Try OpenWA Self-Hosted WhatsApp Gateway
+        clean_digits = recipient.lstrip("+")
+        openwa_chat_id = f"{clean_digits}@c.us"
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                openwa_endpoint = f"{self.openwa_url}/api/sessions/{self.openwa_session}/messages/send-text"
+                openwa_headers = {
+                    "x-api-key": self.openwa_key,
+                    "Content-Type": "application/json",
+                }
+                openwa_payload = {
+                    "chatId": openwa_chat_id,
+                    "text": text,
+                }
+                ow_res = await client.post(openwa_endpoint, headers=openwa_headers, json=openwa_payload)
+                if ow_res.status_code in (200, 201):
+                    ow_data = ow_res.json()
+                    msg_id = ow_data.get("id") or ow_data.get("messageId") or f"openwa_{uuid.uuid4().hex[:12]}"
+                    logger.info("OpenWA WhatsApp LIVE message dispatched to %s. MsgID: %s", openwa_chat_id, msg_id)
+                    return {
+                        "status": "delivered",
+                        "provider": "openwa",
+                        "simulated": False,
+                        "recipient": recipient,
+                        "message_id": msg_id,
+                        "timestamp": time.time(),
+                        "response": ow_data,
+                    }
+                else:
+                    logger.warning("OpenWA dispatch status=%s (%s), falling back to Meta/Simulation", ow_res.status_code, ow_res.text[:120])
+        except Exception as e:
+            logger.debug("OpenWA gateway not reachable or not ready (%s), checking Meta/Simulation", e)
+
+        # 2. Secondary: Meta Cloud API (if configured)
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -80,7 +128,7 @@ class WhatsAppClient:
         }
 
         ts = time.time()
-        if not self.is_live:
+        if not self.is_meta_live:
             # Deterministic simulation with standard Meta WAMID format
             mock_wamid = f"wamid.HBgL{uuid.uuid4().hex[:18].upper()}"
             logger.info(
@@ -109,9 +157,10 @@ class WhatsAppClient:
                 if res.status_code in (200, 201):
                     data = res.json()
                     wamid = data.get("messages", [{}])[0].get("id", f"wamid.{uuid.uuid4().hex}")
-                    logger.info("Live WhatsApp message dispatched to %s. WAMID: %s", recipient, wamid)
+                    logger.info("Live Meta WhatsApp message dispatched to %s. WAMID: %s", recipient, wamid)
                     return {
                         "status": "delivered",
+                        "provider": "meta",
                         "simulated": False,
                         "recipient": recipient,
                         "message_id": wamid,

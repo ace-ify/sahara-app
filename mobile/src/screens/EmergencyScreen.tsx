@@ -7,7 +7,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
 import { colors, space, radius } from '../theme';
-import { getEmergencyStatus, resolveEmergency, updateAvpu, IncidentSnapshot } from '../services/api';
+import { getEmergencyStatus, resolveEmergency, updateAvpu, triggerTwilioCall, IncidentSnapshot } from '../services/api';
 import { useApp } from '../context/AppContext';
 
 export default function EmergencyScreen() {
@@ -279,10 +279,29 @@ export default function EmergencyScreen() {
           big
           onPress={() => Linking.openURL('tel:108').catch(() => {})}
         />
+        {caregiverPhone ? (
+          <Button
+            label={lang === 'hi' ? `केयरगिवर को कॉल करें (${caregiverPhone})` : `Call Caregiver (${caregiverPhone})`}
+            sub={lang === 'hi' ? 'तुरंत रियल फोन कॉल मिलाएं' : 'Direct Twilio emergency call'}
+            icon="phone-call"
+            variant="outline"
+            big
+            onPress={() => {
+              triggerTwilioCall({
+                to: caregiverPhone,
+                patient: patientName,
+                kind: 'emergency',
+                reason: incident?.reason || 'आपातकालीन सहायता अनुरोध',
+                lang,
+              }).catch(() => {});
+              Linking.openURL(`tel:${caregiverPhone.replace(/\s+/g, '')}`).catch(() => {});
+            }}
+          />
+        ) : null}
         <Button
           label={t('emerg_resolve')}
           sub={t('emerg_resolve_sub')}
-          variant="outline"
+          variant="ghost"
           big
           onPress={() => { resolveEmergency(channel).catch(() => {}); nav.goBack(); }}
         />

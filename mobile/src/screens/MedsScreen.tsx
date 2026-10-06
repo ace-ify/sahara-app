@@ -89,28 +89,28 @@ export default function MedsScreen() {
       {/* Prescription & Chemist Bill Scanner Trigger Card */}
       <Pressable onPress={() => nav.navigate('PrescriptionScanner')}>
         <Card doubleBezel glow tint="cyan" style={s.sectionCard}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <View style={s.scannerIconWrap}>
-              <Icon name="camera" set="feather" size={22} color={colors.black} />
+              <Icon name="camera" set="feather" size={20} color="#06B6D4" />
             </View>
             <View style={{ flex: 1 }}>
               <View style={s.rowBetween}>
-                <AppText variant="label" weight="bold" color={colors.white}>
+                <AppText variant="label" weight="bold" color={colors.white} style={{ letterSpacing: -0.2 }}>
                   {lang === 'hi' ? '📸 पर्चा व बिल स्कैनर' : '📸 Scan Prescription & Bill'}
                 </AppText>
                 <View style={s.newPill}>
-                  <AppText variant="small" weight="bold" color={colors.black} style={{ fontSize: 10 }}>
+                  <AppText variant="small" weight="bold" color={colors.brand} style={{ fontSize: 10, letterSpacing: 0.5 }}>
                     {lang === 'hi' ? 'नया' : 'NEW'}
                   </AppText>
                 </View>
               </View>
-              <AppText variant="small" color={colors.textMuted} style={{ marginTop: 2 }}>
+              <AppText variant="small" color={colors.textMuted} style={{ marginTop: 2, fontSize: 12 }}>
                 {lang === 'hi'
                   ? 'हाथ की पर्ची + केमिस्ट बिल का मिलान · जन औषधि से बचत'
                   : 'Multi-source Rx + GST Bill cross-check · Jan Aushadhi match'}
               </AppText>
             </View>
-            <Icon name="chevron-right" set="feather" size={20} color={colors.brand} />
+            <Icon name="chevron-right" set="feather" size={18} color="#06B6D4" />
           </View>
         </Card>
       </Pressable>
@@ -195,12 +195,12 @@ const s = StyleSheet.create({
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   adherenceBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(5, 223, 114, 0.12)',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: 'rgba(5, 223, 114, 0.28)',
   },
   track: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceHigh, marginTop: 12, overflow: 'hidden' },
   trackFill: { height: 6, borderRadius: 3, backgroundColor: colors.brand },
@@ -218,17 +218,17 @@ const s = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.brand,
+    backgroundColor: 'rgba(6, 182, 212, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.brand,
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 3,
   },
   newPill: {
-    backgroundColor: colors.brand,
-    paddingHorizontal: 6,
+    backgroundColor: 'rgba(5, 223, 114, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(5, 223, 114, 0.32)',
+    paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.pill,
   },

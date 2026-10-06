@@ -499,45 +499,47 @@ export default function TalkScreen() {
       />
 
       {/* Header - safe area padded so it never collides with Android status bar */}
-      <View style={[s.header, { paddingTop: headerTopPad + 6, height: 58 + headerTopPad }]}>
+      <View style={[s.header, { paddingTop: headerTopPad + 6, height: 60 + headerTopPad }]}>
         <Pressable
-          style={s.circleBtn}
+          style={({ pressed }) => [s.circleBtn, pressed && { opacity: 0.8 }]}
           onPress={() => setDrawerOpen(true)}
           accessibilityLabel={t('a11y_menu')}
         >
-          <Icon name="menu" set="feather" size={20} color={colors.text} />
+          <Icon name="menu" set="feather" size={19} color={colors.text} />
         </Pressable>
 
-        {/* Backend reachability: green = live, amber = unreachable (honest
-            degraded mode, so mock-mode can never masquerade as a live demo) */}
+        {/* Live Clinical Telemetry Badge */}
         <View
-          style={s.connDot}
+          style={s.telemetryBadge}
           accessibilityLabel={backendOnline === null ? 'checking connection' : backendOnline ? 'server connected' : 'server unreachable'}
         >
           <View
             style={[
               s.connDotInner,
               {
-                backgroundColor: backendOnline === null ? '#64748B' : backendOnline ? '#34D399' : '#F59E0B',
+                backgroundColor: backendOnline === null ? '#64748B' : backendOnline ? colors.brand : '#F59E0B',
               },
             ]}
           />
+          <AppText variant="small" weight="bold" color={colors.text} style={{ fontSize: 11, letterSpacing: 0.4 }}>
+            {backendOnline === false ? 'OFFLINE' : 'SAHARA · POOJA'}
+          </AppText>
         </View>
 
         <View style={{ flex: 1 }} />
 
         <PressableScale style={s.sosPill} onPress={handleSOS} accessibilityLabel="Emergency SOS">
-          <AppText variant="small" weight="bold" color={colors.danger} style={{ fontSize: 12 }}>
+          <AppText variant="small" weight="bold" color="#FFFFFF" style={{ fontSize: 11, letterSpacing: 0.6 }}>
             SOS
           </AppText>
         </PressableScale>
 
         <Pressable
-          style={s.circleBtn}
+          style={({ pressed }) => [s.circleBtn, pressed && { opacity: 0.8 }]}
           onPress={() => nav.navigate('Profile')}
           accessibilityLabel={t('a11y_settings')}
         >
-          <Icon name="sliders" set="feather" size={20} color={colors.text} />
+          <Icon name="sliders" set="feather" size={19} color={colors.text} />
         </Pressable>
       </View>
 
@@ -1040,31 +1042,42 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
   },
   circleBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    backgroundColor: colors.iconBtn,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  connDot: {
-    width: 18,
-    height: 40,
+  telemetryBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   connDotInner: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   sosPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 5,
     borderRadius: radius.pill,
-    backgroundColor: colors.dangerTint,
+    backgroundColor: 'rgba(239, 68, 68, 0.90)',
     borderWidth: 1,
-    borderColor: colors.dangerDeep,
+    borderColor: '#EF4444',
+    shadowColor: colors.danger,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 3,
   },
   chat: { flex: 1 },
   chatContent: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 8 },
@@ -1074,10 +1087,12 @@ const s = StyleSheet.create({
   userRow: { alignItems: 'flex-end', marginBottom: 18 },
   userBubble: {
     backgroundColor: colors.bubbleUser,
-    borderRadius: 20,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.bubbleUserBorder,
     paddingHorizontal: 16,
-    paddingVertical: 11,
-    maxWidth: '80%',
+    paddingVertical: 10,
+    maxWidth: '82%',
   },
   home: { flex: 1, paddingHorizontal: 18 },
   statusPill: {
@@ -1258,10 +1273,10 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtnRightActive: {
-    backgroundColor: '#34D399',
-    borderColor: '#34D399',
-    shadowColor: '#34D399',
-    shadowOpacity: 0.4,
+    backgroundColor: colors.brand,
+    borderColor: colors.brand,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.35,
     shadowRadius: 10,
   },
   modalBackdrop: {

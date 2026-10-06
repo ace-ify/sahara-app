@@ -38,6 +38,7 @@ from agent import Agent, SAATHI_PROMPT, SAATHI_PROMPT_EN
 import brain
 import emergency
 import laya
+import outbound_call
 import tools
 import whatsapp
 
@@ -719,7 +720,7 @@ async def _default_notify(contact: emergency.Contact, incident: emergency.Incide
         incident.channel,
     )
     if contact.kind == "caregiver":
-        # Dispatches live or simulated Meta WhatsApp Business Cloud API message
+        # 1. Dispatches WhatsApp Alert (OpenWA Gateway primary / Meta Cloud API secondary)
         wa_res = await whatsapp.whatsapp_client.send_emergency_alert(
             patient_name=incident.patient,
             reason=incident.reason,
@@ -728,8 +729,17 @@ async def _default_notify(contact: emergency.Contact, incident: emergency.Incide
             channel=incident.channel,
             to=contact.endpoint,
         )
-        logger.info("Caregiver Meta WhatsApp dispatch result: %s (id=%s)", wa_res.get("status"), wa_res.get("message_id"))
-        return wa_res.get("status") in ("delivered", "sent")
+        logger.info("Caregiver WhatsApp dispatch result: %s (id=%s)", wa_res.get("status"), wa_res.get("message_id"))
+
+        # 2. Simultaneous Real PSTN Voice Call via Twilio to Caregiver's Phone (+1 682 349 7450)
+        call_res = await outbound_call.trigger_emergency_call(
+            to=contact.endpoint,
+            patient=incident.patient,
+            reason=incident.reason,
+            lang="hi",
+        )
+        logger.info("Caregiver Twilio Outbound Call result: %s (call_sid=%s)", call_res.get("status"), call_res.get("call_sid"))
+        return wa_res.get("status") in ("delivered", "sent") or call_res.get("status") == "queued"
 
     elif contact.kind == "ambulance":
         # 108 / 112 EMS CAD dispatch payload
@@ -751,11 +761,13 @@ async def _default_notify(contact: emergency.Contact, incident: emergency.Incide
 
 async def _default_fallback(incident: emergency.Incident) -> None:
     logger.warning(
-        "EMERGENCY FALLBACK: Dispatch ladder exhausted for channel %s. Dispatched high-priority fallback WhatsApp alert.",
+        "EMERGENCY FALLBACK: Dispatch ladder exhausted for channel %s. Dispatched high-priority fallback WhatsApp & Voice call.",
         incident.channel,
     )
+    caregiver = next((c for c in incident.contacts if c.kind == "caregiver"), None)
+    target_endpoint = caregiver.endpoint if caregiver else None
     await whatsapp.whatsapp_client.send_text(
-        to=None,
+        to=target_endpoint,
         text=(
             f"⚠️ *SAAHARA EMERGENCY ESCALATION FALLBACK*\n"
             f"Patient: {incident.patient}\n\n"
@@ -764,6 +776,13 @@ async def _default_fallback(incident: emergency.Incident) -> None:
             f"Please call the patient immediately or dispatch emergency services."
         ),
     )
+    if target_endpoint:
+        await outbound_call.trigger_emergency_call(
+            to=target_endpoint,
+            patient=incident.patient,
+            reason=f"आपातकालीन अलर्ट: किसी ने जवाब नहीं दिया है। तुरंत संपर्क करें। {incident.reason}",
+            lang="hi",
+        )
 
 
 dispatch_ladder = emergency.DispatchLadder(
@@ -1295,10 +1314,24 @@ async def admin_start_followup_call(req: StartFollowupRequest):
         "transcript": [],
         "started_at": time.time(),
     }
+
+    # Real Twilio PSTN Voice Call to Patient / Caregiver
+    phone_to_call = patient.get("caregiver_phone") or patient.get("phone")
+    twilio_call_res = None
+    if phone_to_call:
+        twilio_call_res = await outbound_call.trigger_followup_call(
+            to=phone_to_call,
+            patient=patient["name"],
+            note=req.note or "",
+            lang="hi",
+        )
+        logger.info("Admin follow-up Twilio Call result: %s (call_sid=%s)", twilio_call_res.get("status"), twilio_call_res.get("call_sid"))
+
     return {
         "status": "success",
-        "simulated": True,  # rings the patient's app, not a PSTN number
-        "transport": "agora-rtc",
+        "simulated": not bool(twilio_call_res and not twilio_call_res.get("simulated")),
+        "transport": "agora-rtc+twilio-voice",
+        "twilio_call": twilio_call_res,
         "call": _FOLLOWUP_CALLS[call_id],
     }
 
@@ -1362,6 +1395,75 @@ async def admin_incoming_followup(channel: str = Query(...)):
         if call["channel"] == channel and call["status"] == "in_progress":
             return {"status": "success", "incoming": True, "call": call}
     return {"status": "success", "incoming": False, "call": None}
+
+
+class DirectTwilioCallRequest(BaseModel):
+    to: str
+    patient: Optional[str] = "मरीज़"
+    kind: Optional[str] = "emergency"  # "emergency" | "followup" | "fall"
+    reason: Optional[str] = "आपातकालीन चेक"
+    note: Optional[str] = ""
+    lang: Optional[str] = "hi"
+
+
+@router.post("/api/twilio/call")
+async def direct_twilio_call(req: DirectTwilioCallRequest):
+    """Directly trigger a real outbound PSTN voice call via Sahara Twilio (+1 682 349 7450)."""
+    if req.kind == "followup":
+        res = await outbound_call.trigger_followup_call(
+            to=req.to,
+            patient=req.patient or "मरीज़",
+            note=req.note or "",
+            lang=req.lang or "hi",
+        )
+    elif req.kind == "fall":
+        res = await outbound_call.trigger_fall_alert_call(
+            to=req.to,
+            patient=req.patient or "मरीज़",
+            lang=req.lang or "hi",
+        )
+    else:
+        res = await outbound_call.trigger_emergency_call(
+            to=req.to,
+            patient=req.patient or "मरीज़",
+            reason=req.reason or "चिकित्सीय आपातकाल",
+            lang=req.lang or "hi",
+        )
+    return res
+
+
+@router.get("/api/whatsapp/status")
+async def get_whatsapp_status():
+    """Get status of OpenWA self-hosted WhatsApp gateway and Meta Cloud API."""
+    openwa_ready = False
+    openwa_details = {}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{whatsapp.OPENWA_DEFAULT_URL}/api/health/ready")
+            if r.status_code == 200:
+                openwa_ready = True
+                openwa_details = r.json()
+    except Exception as e:
+        openwa_details = {"error": str(e)}
+
+    return {
+        "status": "success",
+        "openwa_gateway": {
+            "url": whatsapp.OPENWA_DEFAULT_URL,
+            "ready": openwa_ready,
+            "session_id": whatsapp.OPENWA_DEFAULT_SESSION,
+            "dashboard_url": "http://localhost:2785",
+            "details": openwa_details,
+        },
+        "meta_cloud_api": {
+            "configured": whatsapp.whatsapp_client.is_meta_live,
+        },
+        "twilio_voice": {
+            "from_number": outbound_call.TWILIO_FROM_NUMBER,
+            "live_configured": bool(outbound_call.TWILIO_ACCOUNT_SID and outbound_call.TWILIO_AUTH_TOKEN),
+            "sip_trunk": outbound_call.TWILIO_SIP_TRUNK,
+        },
+    }
 
 
 app.include_router(router)

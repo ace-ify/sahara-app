@@ -9,7 +9,7 @@ import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
 import { colors, space } from '../theme';
 import { useApp } from '../context/AppContext';
-import { getMedications, getVitalsHistory, Medication } from '../services/api';
+import { getMedications, getVitalsHistory, triggerTwilioCall, Medication } from '../services/api';
 
 type VitalsEntry = {
   id: string;
@@ -27,7 +27,7 @@ const esc = (s: string) =>
     .replace(/>/g, '&gt;');
 
 export default function DoctorSummaryScreen() {
-  const { lang, userName } = useApp();
+  const { lang, userName, caregiverPhone } = useApp();
   const [meds, setMeds] = useState<Medication[]>([]);
   const [vitals, setVitals] = useState<VitalsEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,6 +184,22 @@ export default function DoctorSummaryScreen() {
             </AppText>
           </>
         )}
+
+        <Button
+          label={lang === 'hi' ? '📞 AI डॉक्टर फॉलो-अप कॉल' : '📞 AI Doctor Follow-Up Call'}
+          sub={lang === 'hi' ? 'Twilio रियल वॉइस कॉल से रिपोर्ट समीक्षा' : 'Real Outbound Voice Follow-Up'}
+          icon="phone-call"
+          variant="outline"
+          onPress={() => {
+            triggerTwilioCall({
+              to: caregiverPhone || '+919876543210',
+              patient: userName || 'मरीज़',
+              kind: 'followup',
+              note: 'डॉक्टर सारांश समीक्षा व फॉलो-अप',
+              lang,
+            }).catch(() => {});
+          }}
+        />
       </ScrollView>
     </Screen>
   );

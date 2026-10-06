@@ -28,5 +28,7 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs & temporary integrations
 *.log
+openwa/
+openwa_docs.json

@@ -164,7 +164,7 @@ export default function VitalsScreen() {
             progress={stabilityProgress}
             size={68}
             strokeWidth={6}
-            progressCircleColor={isBpAlarm || isSugarAlarm ? '#EF4444' : '#10B981'}
+            progressCircleColor={isBpAlarm || isSugarAlarm ? '#EF4444' : colors.brand}
             renderCenter={() => (
               <AppText variant="label" weight="bold" color="#F8FAFC">
                 {healthScore}%

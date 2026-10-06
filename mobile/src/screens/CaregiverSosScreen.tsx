@@ -7,7 +7,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
 import { colors, space } from '../theme';
-import { ackEmergency, resolveEmergency, getEmergencyStatus, IncidentSnapshot } from '../services/api';
+import { ackEmergency, resolveEmergency, getEmergencyStatus, triggerTwilioCall, IncidentSnapshot } from '../services/api';
 import { useApp } from '../context/AppContext';
 
 export default function CaregiverSosScreen() {
@@ -85,6 +85,22 @@ export default function CaregiverSosScreen() {
           variant={joined ? 'primary' : 'danger'}
           big
           onPress={handleJoin}
+        />
+
+        <Button
+          label={lang === 'hi' ? 'मरीज के फोन पर कॉल करें' : 'Call Patient via Phone'}
+          sub={lang === 'hi' ? 'Twilio रियल वॉइस कॉल (+1 682 349 7450)' : 'Outbound Twilio PSTN call'}
+          icon="phone-call"
+          variant="outline"
+          onPress={() => {
+            triggerTwilioCall({
+              to: '+919876543210',
+              patient: incident?.patient || 'मरीज़',
+              kind: 'emergency',
+              reason: 'केयरगिवर आपातकालीन चेक',
+              lang,
+            }).catch(() => {});
+          }}
         />
 
         {sbar && (

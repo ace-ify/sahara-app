@@ -47,11 +47,11 @@ export function ScreenHeader({
       {/* Left Action: Back Arrow */}
       {showBack ? (
         <Pressable
-          style={s.iconBtn}
+          style={({ pressed }) => [s.iconBtn, pressed && s.iconBtnPressed]}
           onPress={handleBack}
           accessibilityLabel="Go back"
         >
-          <Icon name="arrow-left" set="feather" size={20} color="#F3F4F6" />
+          <Icon name="arrow-left" set="feather" size={18} color="#F8FAFC" />
         </Pressable>
       ) : (
         <View style={s.iconBtnPlaceholder} />
@@ -59,11 +59,11 @@ export function ScreenHeader({
 
       {/* Center: Title & Subtitle */}
       <View style={s.titleWrap}>
-        <AppText variant="label" weight="bold" color="#F3F4F6" align="center" numberOfLines={1}>
+        <AppText variant="label" weight="bold" color="#F8FAFC" align="center" numberOfLines={1} style={{ letterSpacing: -0.2 }}>
           {title}
         </AppText>
         {subtitle ? (
-          <AppText variant="small" color="#9CA3AF" align="center" numberOfLines={1} style={{ fontSize: 11 }}>
+          <AppText variant="small" color={colors.textMuted} align="center" numberOfLines={1} style={{ fontSize: 11, marginTop: 1 }}>
             {subtitle}
           </AppText>
         ) : null}
@@ -72,22 +72,22 @@ export function ScreenHeader({
       {/* Right Action: Language toggle & SOS */}
       <View style={s.rightActions}>
         <Pressable
-          style={s.langBtn}
+          style={({ pressed }) => [s.langBtn, pressed && { opacity: 0.8 }]}
           onPress={toggleLanguage}
           accessibilityLabel="Toggle Language"
         >
-          <AppText variant="small" weight="bold" color="#2DD4BF" style={{ fontSize: 12 }}>
+          <AppText variant="small" weight="bold" color={colors.brand} style={{ fontSize: 12, letterSpacing: 0.5 }}>
             {lang === 'hi' ? 'EN' : 'हिं'}
           </AppText>
         </Pressable>
 
         {showSOS && (
           <Pressable
-            style={s.sosBtn}
+            style={({ pressed }) => [s.sosBtn, pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] }]}
             onPress={handleSOS}
             accessibilityLabel="Emergency SOS"
           >
-            <AppText variant="small" weight="bold" color="#EF4444" style={{ fontSize: 12 }}>
+            <AppText variant="small" weight="bold" color="#FFFFFF" style={{ fontSize: 11, letterSpacing: 0.8 }}>
               SOS
             </AppText>
           </Pressable>
@@ -99,7 +99,7 @@ export function ScreenHeader({
 
 const s = StyleSheet.create({
   header: {
-    height: 58,
+    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -110,17 +110,21 @@ const s = StyleSheet.create({
     zIndex: 10,
   },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.pill,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  iconBtnPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
   },
   iconBtnPlaceholder: {
-    width: 36,
+    width: 38,
   },
   titleWrap: {
     flex: 1,
@@ -134,23 +138,23 @@ const s = StyleSheet.create({
     gap: 8,
   },
   langBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 11,
     paddingVertical: 5,
     borderRadius: radius.pill,
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(5, 223, 114, 0.10)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.28)',
+    borderColor: 'rgba(5, 223, 114, 0.28)',
   },
   sosBtn: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 5,
     borderRadius: radius.pill,
-    backgroundColor: 'rgba(239, 68, 68, 0.16)',
+    backgroundColor: 'rgba(239, 68, 68, 0.90)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
+    borderColor: '#EF4444',
     shadowColor: colors.danger,
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 3,
   },
 });
