@@ -37,3 +37,17 @@ services:
         sync: false
       - key: LLM_PROXY_URL
         sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_SIP_TRUNK
+        sync: false
+      - key: OPENWA_BASE_URL
+        sync: false
+      - key: OPENWA_API_KEY
+        sync: false
+      - key: OPENWA_SESSION_ID
+        sync: false
