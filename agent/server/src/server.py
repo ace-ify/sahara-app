@@ -1021,12 +1021,16 @@ async def tts_endpoint(req: TtsRequest):
 
     lang_code = (req.lang or "hi").lower()
     if lang_code.startswith("en"):
-        voice_id = "en-IN-isha"
-        style = "Conversational"
+        configured_en = os.getenv("MURF_VOICE_EN", os.getenv("MURF_VOICE", "en-IN-priya"))
+        if configured_en in ("Pooja", "pooja", "hi-IN-shweta"):
+            voice_id = "en-IN-priya"
+        else:
+            voice_id = configured_en
+        style = os.getenv("MURF_STYLE_EN", "Conversational")
         locale = "en-IN"
     else:
         configured_voice = os.getenv("MURF_VOICE", "hi-IN-shweta")
-        if configured_voice in ("Anisha", "Pooja", ""):
+        if configured_voice in ("Anisha", "Pooja", "pooja", ""):
             voice_id = "hi-IN-shweta"
         else:
             voice_id = configured_voice

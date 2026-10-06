@@ -405,22 +405,27 @@ export async function speakNatural(
 // full-text-synthesis-time to first-sentence-synthesis-time.
 // ---------------------------------------------------------------------------
 
-/** Split a full reply into speakable chunks (sentence-ish, Hindi-aware). */
+/** Split a full reply into speakable chunks (sentence-ish, Hindi-aware, clause-aware). */
 function splitIntoSpeakableChunks(text: string): string[] {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
   if (!clean) return [];
-  // Split on danda (।), period, question mark, or newline — the standard Hindi
-  // punctuation set — keeping the delimiter attached.
-  const parts = clean.split(/(?<=[।.?!\n])/);
+  // Split on sentence terminators (danda, period, question mark, exclamation, newline)
+  // or on major clause boundaries (comma, semicolon, colon)
+  const parts = clean.split(/(?<=[।.?!:\n]|,\s+)/);
   const chunks: string[] = [];
   let buffer = '';
   for (const part of parts) {
     const piece = part.trim();
     if (!piece) continue;
     buffer += (buffer ? ' ' : '') + piece;
-    // Speak at sentence boundaries, but also flush mid-sentence every ~90
-    // chars so a long sentence still starts playing before it fully arrives.
-    if (buffer.length >= 12 || /[।.?!]$/.test(buffer)) {
+    // Dispatch as soon as a complete clause (>= 22 chars) or sentence boundary is reached
+    if (buffer.length >= 22 && /[।.?!,;:]$/.test(buffer)) {
+      chunks.push(buffer);
+      buffer = '';
+    } else if (/[।.?!]$/.test(buffer)) {
+      chunks.push(buffer);
+      buffer = '';
+    } else if (buffer.length >= 75) {
       chunks.push(buffer);
       buffer = '';
     }
@@ -482,12 +487,12 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
         // If more text may still arrive and we're out of queued chunks, wait
         // briefly for the next push before deciding we're finished.
         if (!closed && next >= chunks.length) {
-          await new Promise((r) => setTimeout(r, 350));
+          await new Promise((r) => setTimeout(r, 200));
         }
       } else if (closed) {
         break;
       } else {
-        await new Promise((r) => setTimeout(r, 120));
+        await new Promise((r) => setTimeout(r, 80));
       }
     }
     if (generation === speechGeneration && closed && next >= chunks.length) {
@@ -507,19 +512,27 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
   const speakerRef: any = {};
 
   const speaker = {
-    /** Feed streamed text; sentence-complete pieces are queued for playback. */
+    /** Feed streamed text; sentence-complete pieces are queued for playback immediately. */
     pushText(delta: string) {
       if (generation !== speechGeneration) return;
-      // Accumulate into the last partial chunk; only queue sentence-complete
-      // boundaries.
       _pending += delta;
       const ready = splitIntoSpeakableChunks(_pending);
       if (ready.length === 0) return;
-      // The final element may be an incomplete sentence — keep it pending.
+
       const lastPiece = ready[ready.length - 1];
       const complete = ready.slice(0, ready.length - 1);
-      for (const piece of complete) chunks.push(piece);
-      _pending = lastPiece;
+      for (const piece of complete) {
+        if (piece.trim()) chunks.push(piece.trim());
+      }
+
+      // If the last piece itself is terminated by sentence or clause punctuation,
+      // dispatch it immediately instead of keeping it stalled in _pending!
+      if (/[।.?!,;:]$/.test(lastPiece.trim()) && lastPiece.trim().length >= 12) {
+        chunks.push(lastPiece.trim());
+        _pending = '';
+      } else {
+        _pending = lastPiece;
+      }
     },
     /** Mark the text stream complete; flush the pending tail and finish. */
     close() {

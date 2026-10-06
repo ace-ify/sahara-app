@@ -1,21 +1,17 @@
 import { NativeModules, Platform } from 'react-native';
 
 export function getBackendBaseUrl(): string {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal) {
+      return `http://${window.location.hostname}:8000`;
+    }
+  }
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '');
   }
   if (Platform.OS === 'web') {
-    // If running in browser on a remote domain (like Netlify or custom domain), use live Render backend
-    if (
-      typeof window !== 'undefined' &&
-      window.location &&
-      window.location.hostname &&
-      window.location.hostname !== 'localhost' &&
-      window.location.hostname !== '127.0.0.1'
-    ) {
-      return 'https://sahara-sh0i.onrender.com';
-    }
-    return 'http://localhost:8000';
+    return 'https://sahara-sh0i.onrender.com';
   }
   // Derive the backend host from the Metro bundler URL so any machine serving
   // the app also serves the API (no hardcoded developer-LAN IP that breaks on

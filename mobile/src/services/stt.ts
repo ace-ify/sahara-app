@@ -12,7 +12,7 @@ const MAX_RECORDING_MS = 30000;
 // Hands-free voice-turn caps (call/loop mode): stop shortly after the caller
 // pauses, or hard-cap the turn so the loop always advances.
 const VOICE_TURN_MAX_MS = 14000;
-const VOICE_TURN_SILENCE_MS = 1400;
+const VOICE_TURN_SILENCE_MS = 750;
 const VOICE_TURN_SPEECH_LEVEL = 0.16; // normalized mic level treating as speech
 
 export interface Dictation {
