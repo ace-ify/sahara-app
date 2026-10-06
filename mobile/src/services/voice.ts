@@ -8,7 +8,7 @@ import {
   clearLatestCard,
   sendChatMessage,
 } from './api';
-import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio, speakNaturalStream } from './tts';
+import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio } from './tts';
 import { ConvState } from '../components/StateBadge';
 import { Language } from '../context/AppContext';
 import {
@@ -580,23 +580,6 @@ export function useAgoraVoice() {
     setState('thinking');
 
     try {
-      // Live-caption streaming: as LLM deltas arrive they grow the agent
-      // bubble in place, and sentences start playing on Murf immediately.
-      const speaker = speakNaturalStream(lang, {
-        onChunk: () => {},
-        onDone: () => {
-          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
-          setState((curr) => {
-            if (curr !== 'speaking') return curr;
-            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
-          });
-        },
-        onError: () => {
-          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
-        },
-      });
-      setCurrentlySpeakingId(agentMsgId);
-
       let liveReply = '';
       const chatRes = await sendChatMessage(
         trimmed,
@@ -608,7 +591,6 @@ export function useAgoraVoice() {
           onDelta: (delta) => {
             if (gen !== generationRef.current) return;
             liveReply += delta;
-            speaker.pushText(delta);
             // Live caption: grow the agent bubble in place as text streams.
             setMessages((prev) =>
               prev.map((m) => (m.id === agentMsgId ? { ...m, text: liveReply } : m)),
@@ -616,13 +598,8 @@ export function useAgoraVoice() {
           },
         },
       );
-      speaker.close();
-      if (gen !== generationRef.current) {
-        speaker.stop();
-        return;
-      }
-      // (gen guard also applies inside onDelta above — a newer turn silently
-      // discards this turn's remaining deltas.)
+
+      if (gen !== generationRef.current) return;
 
       let reply = chatRes.text || liveReply;
       const turnCard = chatRes.card || null;
@@ -636,19 +613,31 @@ export function useAgoraVoice() {
         reply = lang === 'hi'
           ? 'माफ़ कीजिए, अभी सर्वर से संपर्क नहीं हो पा रहा है। कृपया एक बार दोबारा पूछें।'
           : 'I am unable to reach the server right now. Please ask again in a moment.';
-        setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply } : m)));
-        // Offline fallback still speaks — with the device voice if Murf is down.
-        speakText(reply, lang, agentMsgId, () => {
+      }
+
+      // Final text update for message bubble and card
+      setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply, card: turnCard } : m)));
+
+      // Speak the complete, natural reply as ONE single fluent Ayushi audio stream (NO chunking / NO fragments)
+      setState('speaking');
+      setCurrentlySpeakingId(agentMsgId);
+
+      speakNatural(reply, lang, {
+        onDone: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
           setState((curr) => {
             if (curr !== 'speaking') return curr;
             return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
           });
-        });
-      } else {
-        // Final text (authoritative, may differ in whitespace from stream).
-        setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply, card: turnCard } : m)));
-      }
-      setState('speaking');
+        },
+        onError: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
+          setState((curr) => {
+            if (curr !== 'speaking') return curr;
+            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+          });
+        },
+      });
     } catch (err) {
       console.warn('sendVoiceQuery error:', err);
       setCurrentlySpeakingId(null);

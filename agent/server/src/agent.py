@@ -329,10 +329,10 @@ class Agent:
         if murf_key:
             tts = MurfTTS(
                 key=murf_key,
-                voice_id=os.getenv("MURF_VOICE", "hi-IN-shweta"),
+                voice_id=os.getenv("MURF_VOICE", "hi-IN-ayushi"),
                 locale=murf_locale,
             )
-            logger.info("TTS: Murf %s (voice=%s)", murf_locale, os.getenv("MURF_VOICE", "hi-IN-shweta"))
+            logger.info("TTS: Murf %s (voice=%s)", murf_locale, os.getenv("MURF_VOICE", "hi-IN-ayushi"))
         else:
             tts = MiniMaxTTS(model="speech_2_6_turbo", voice_id="English_captivating_female1")
             logger.info("TTS: MiniMax fallback — set MURF_API_KEY in server/.env for the Hindi Murf voice")

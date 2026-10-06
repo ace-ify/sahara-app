@@ -4,7 +4,7 @@
 // Web: live browser SpeechRecognition with interim results.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, getBackendBaseUrl } from './api';
 
 export type DictationPhase = 'idle' | 'recording' | 'transcribing';
 
@@ -12,8 +12,18 @@ const MAX_RECORDING_MS = 30000;
 // Hands-free voice-turn caps (call/loop mode): stop shortly after the caller
 // pauses, or hard-cap the turn so the loop always advances.
 const VOICE_TURN_MAX_MS = 14000;
-const VOICE_TURN_SILENCE_MS = 750;
+const VOICE_TURN_SILENCE_MS = 550;
 const VOICE_TURN_SPEECH_LEVEL = 0.16; // normalized mic level treating as speech
+
+// Persistent cache across re-renders and turns: if Google Web Speech API fails
+// with 'network' (e.g. Brave shields, Google Speech blocked), immediately use
+// MediaRecorder + Whisper without burning 2-3 seconds of lag on each turn.
+let globalWebSpeechBlocked = false;
+try {
+  if (typeof window !== 'undefined' && window.sessionStorage?.getItem('agora_stt_media_rec') === 'true') {
+    globalWebSpeechBlocked = true;
+  }
+} catch {}
 
 export interface Dictation {
   phase: DictationPhase;
@@ -209,32 +219,17 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
           const formData = new FormData();
           formData.append('file', recordedBlob, 'speech.webm');
 
-          const urlsToTry = [API_BASE_URL];
-          if (
-            typeof window !== 'undefined' &&
-            (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1') &&
-            API_BASE_URL !== 'http://localhost:8000'
-          ) {
-            urlsToTry.push('http://localhost:8000');
-          }
-
-          let text = '';
-          for (const baseUrl of urlsToTry) {
-            try {
-              const res = await fetch(`${baseUrl}/api/transcribe?lang=${encodeURIComponent(lang)}`, {
-                method: 'POST',
-                body: formData,
-              });
-              if (res.ok) {
-                const data = await res.json();
-                text = (data?.text || '').trim();
-                break;
-              }
-            } catch {}
-          }
-
-          if (text) {
-            onResultRef.current(text, false);
+          const baseUrl = getBackendBaseUrl();
+          const res = await fetch(`${baseUrl}/api/transcribe?lang=${encodeURIComponent(lang)}`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const text = (data?.text || '').trim();
+            if (text) {
+              onResultRef.current(text, false);
+            }
           }
         } catch (err) {
           console.warn('[stt] transcription error:', err);
@@ -260,13 +255,14 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
 
   const start = useCallback(() => {
     setError(null);
-    if (useMediaRecorderFallbackRef.current) {
+    if (globalWebSpeechBlocked || useMediaRecorderFallbackRef.current) {
       startMediaRecorder();
       return;
     }
     const SR: any =
       (globalThis as any).SpeechRecognition || (globalThis as any).webkitSpeechRecognition;
     if (!SR) {
+      globalWebSpeechBlocked = true;
       useMediaRecorderFallbackRef.current = true;
       startMediaRecorder();
       return;
@@ -293,6 +289,8 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
         const kind = event?.error || 'unknown';
         if (kind === 'network') {
           console.info('[stt] Web Speech API network error (Google Speech blocked/unreachable). Switching to MediaRecorder + Whisper.');
+          globalWebSpeechBlocked = true;
+          try { window.sessionStorage?.setItem('agora_stt_media_rec', 'true'); } catch {}
           useMediaRecorderFallbackRef.current = true;
           try { rec.abort?.(); } catch {}
           recognitionRef.current = null;

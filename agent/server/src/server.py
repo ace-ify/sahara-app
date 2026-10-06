@@ -999,7 +999,7 @@ async def execute_tool_endpoint(req: ExecuteToolRequest, channel: Optional[str] 
 # ----------------------------------------------------------------------------
 
 MURF_API_KEY = os.getenv("MURF_API_KEY", "")
-MURF_VOICE = os.getenv("MURF_VOICE", "hi-IN-shweta")
+MURF_VOICE = os.getenv("MURF_VOICE", "hi-IN-ayushi")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 
@@ -1020,9 +1020,7 @@ async def tts_endpoint(req: TtsRequest):
         raise HTTPException(status_code=503, detail="MURF_API_KEY not configured on server")
 
     lang_code = (req.lang or "hi").lower()
-    voice_id = os.getenv("MURF_VOICE", "hi-IN-ayushi")
-    if voice_id in ("Pooja", "pooja", "Anisha", "hi-IN-shweta", "en-IN-priya", "en-IN-isha", ""):
-        voice_id = "hi-IN-ayushi"
+    voice_id = "hi-IN-ayushi"  # Permanently Ayushi
     style = "Conversational"
     locale = "hi-IN"
 
@@ -1100,6 +1098,7 @@ async def transcribe_endpoint(
     if not audio or len(audio) < 128:
         raise HTTPException(status_code=400, detail="audio body is empty or too short")
 
+    clean_ct = content_type.split(";")[0].strip().lower()
     ext = {
         "audio/m4a": "m4a",
         "audio/mp4": "m4a",
@@ -1107,13 +1106,15 @@ async def transcribe_endpoint(
         "audio/wav": "wav",
         "audio/x-wav": "wav",
         "audio/webm": "webm",
+        "video/webm": "webm",
+        "audio/ogg": "ogg",
         "audio/mpeg": "mp3",
-    }.get(content_type, "m4a")
+    }.get(clean_ct, "webm" if "webm" in content_type.lower() else "m4a")
 
     whisper_lang = "en" if (lang or "hi").lower().startswith("en") else "hi"
     files = {
-        "file": (f"speech.{ext}", audio, content_type),
-        "model": (None, "whisper-large-v3"),
+        "file": (f"speech.{ext}", audio, clean_ct),
+        "model": (None, "whisper-large-v3-turbo"),
         "language": (None, whisper_lang),
         "response_format": (None, "json"),
         "temperature": (None, "0"),
