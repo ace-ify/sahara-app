@@ -1136,41 +1136,37 @@ def _match_medicine_key(clean_query: str) -> Optional[str]:
     m = _STRENGTH_TOKEN_RE.search(clean_query)
     strength = m.group(1) + m.group(2).lower() if m else None
     if strength is None:
-        # bare numeric strength without unit: "rosuvastatin 10" → try mg
-        bare = re.search(r"\b(\d+(?:\.\d+)?)\b", clean_query)
+        # bare numeric strength without unit: "rosuvastatin 10" → try mg.
+        # Whole-token match only — "5" must not match "2.5mg".
+        bare = re.search(r"(?:^|\s)(\d+(?:\.\d+)?)(?:\s|$)", " " + clean_query + " ")
         if bare:
             strength = bare.group(1) + "mg"
     if strength:
-        for k in _PRICE_DB:
-            if k.endswith("_" + strength):
-                salt = _PRICE_DB[k].get("salt", "").lower()
-                if salt and salt in clean_query:
-                    return k
-                brands = _PRICE_DB[k].get("branded_name", "").lower()
-                if any(b and b in clean_query for b in brands.split("/")):
-                    return k
-        # strength present but no direct key match (e.g. "metformin 1000mg" vs key ..._sr):
-        # accept a key whose numeric strength equals the queried one.
-        try:
-            want_num = float(strength.replace("mg", "").replace("mcg", ""))
-        except ValueError:
-            want_num = None
-        if want_num is not None:
-            for k in _PRICE_DB:
-                row = _PRICE_DB[k]
-                if row.get("salt", "").lower() not in clean_query:
-                    continue
-                ks = row.get("strength", "")
-                kn = re.sub(r"[^0-9.]", "", ks.split("/")[0].split("+")[0])
-                try:
-                    if kn and abs(float(kn) - want_num) < 0.01:
-                        return k
-                except ValueError:
-                    continue
+        # 2a. Exact strength match (salt or brand present in query) using the
+        # row's own strength string — immune to key-suffix collisions like
+        # amlodipine_2_5mg endswith "_5mg".
+        q_num = strength.replace("mg", "").replace("mcg", "")
+        for k, row in _PRICE_DB.items():
+            ks = row.get("strength", "")
+            k_first = ks.split("/")[0].split("+")[0].replace("mg", "").replace("mcg", "").replace("SR", "").replace("ER", "").strip()
+            if k_first != q_num:
+                continue
+            # Salt token match — first word of salt ("metformin" from
+            # "Metformin SR") so extended-release keys still resolve.
+            salt_head = row.get("salt", "").lower().split()[0] if row.get("salt") else ""
+            brands = [b.strip() for b in row.get("branded_name", "").lower().split("/")]
+            if (salt_head and salt_head in clean_query) or any(b and b in clean_query for b in brands):
+                return k
 
-    # 3. Brand / salt index lookup (longest token match wins)
+    # 3. Brand / salt index lookup (longest token match wins).
+    #    Skip when a distinct strength number rides along ("Amlong 10" — 10
+    #    is the strength, not a brand word); step-2 already tried it and
+    #    failed only when that strength truly isn't in the dataset.
+    strength_num = strength.replace("mg", "").replace("mcg", "") if strength else ""
     for tok in tokens:
         if not tok:
+            continue
+        if tok.isdigit() and strength_num:
             continue
         if tok in _MEDICINE_SYNONYMS and _MEDICINE_SYNONYMS[tok] in _PRICE_DB:
             return _MEDICINE_SYNONYMS[tok]
