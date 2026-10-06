@@ -1,0 +1,14 @@
+[build]
+  base = "mobile"
+  command = "npx expo export -p web"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  EXPO_PUBLIC_API_URL = "https://sahara-sh0i.onrender.com"
+
+# Ensure client-side SPA routing works seamlessly
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
