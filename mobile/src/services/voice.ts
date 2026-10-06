@@ -327,16 +327,24 @@ export function useAgoraVoice() {
       // Web experience: Instant Murf Voice Call Loop with hands-free STT + Murf TTS + Companion Cards
       if (Platform.OS === 'web') {
         setSessionMode('loop');
-        const greeting =
-          lang === 'hi'
-            ? 'नमस्ते! मैं सहारा हूँ। बताइए, आज आप कैसा महसूस कर रहे हैं?'
-            : 'Hello! I am Sahara. How can I help you today?';
-        appendTranscript('agent', greeting);
-        setState('speaking');
-        speakNatural(greeting, lang, {
-          onDone: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
-          onError: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
-        });
+        // Greet only when the conversation is actually new — reconnecting to
+        // an existing chat must not re-append the greeting every orb tap.
+        const isFreshConversation = messagesRef.current.length === 0;
+        if (isFreshConversation) {
+          const greeting =
+            lang === 'hi'
+              ? 'नमस्ते! मैं सहारा हूँ। बताइए, आज आप कैसा महसूस कर रहे हैं?'
+              : 'Hello! I am Sahara. How can I help you today?';
+          appendTranscript('agent', greeting);
+          setState('speaking');
+          speakNatural(greeting, lang, {
+            onDone: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+            onError: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+          });
+        } else {
+          // Resuming a live conversation: straight to listening, no re-greeting.
+          setState('listening');
+        }
         return;
       }
 
@@ -428,16 +436,20 @@ export function useAgoraVoice() {
       //    pending / agent start failed). Still a real STT → LLM → TTS
       //    pipeline: the UI auto-listens and routes through sendVoiceQuery.
       setSessionMode('loop');
-      const greeting =
-        lang === 'hi'
-          ? 'नमस्ते! मैं सहारा हूँ। बताइए, आज आप कैसा महसूस कर रहे हैं?'
-          : 'Hello! I am Sahara. How can I help you today?';
-      appendTranscript('agent', greeting);
-      setState('speaking');
-      speakNatural(greeting, lang, {
-        onDone: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
-        onError: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
-      });
+      if (messagesRef.current.length === 0) {
+        const greeting =
+          lang === 'hi'
+            ? 'नमस्ते! मैं सहारा हूँ। बताइए, आज आप कैसा महसूस कर रहे हैं?'
+            : 'Hello! I am Sahara. How can I help you today?';
+        appendTranscript('agent', greeting);
+        setState('speaking');
+        speakNatural(greeting, lang, {
+          onDone: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+          onError: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+        });
+      } else {
+        setState('listening');
+      }
     } catch (err: any) {
       console.warn('Agora agent network connection notice:', err);
       // Total failure (no backend at all) → still run the local voice loop so

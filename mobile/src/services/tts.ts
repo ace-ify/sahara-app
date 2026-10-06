@@ -72,6 +72,17 @@ export function stopNaturalVoice() {
   }
   const player = currentPlayer;
   currentPlayer = null;
+  if (player) {
+    try {
+      player.pause?.();
+    } catch {}
+    try {
+      // RN web exposes HTMLAudioElement; scrub the src so a paused element
+      // can't keep buffering a half-fetched clip.
+      if (typeof player.removeAttribute === 'function') player.removeAttribute('src');
+      player.load?.();
+    } catch {}
+  }
   try {
     Speech.stop();
   } catch {}
@@ -135,7 +146,12 @@ function playWebAudio(
   cb?: VoiceCallbacks,
 ) {
   try {
-    const audio = sharedAudioElement || new window.Audio();
+    // Fresh element per clip. Reusing the primed sharedAudioElement was the
+    // machine-voice root cause: it sits paused mid-prime with a data: URI src,
+    // and swapping src on a paused+crossOrigin element intermittently rejects
+    // play() — which silently fell through to the robotic device TTS.
+    // (The shared element is still used once for the unlock gesture only.)
+    const audio = new window.Audio();
     audio.crossOrigin = 'anonymous';
     currentPlayer = audio;
 
@@ -149,11 +165,10 @@ function playWebAudio(
 
     cb?.onStart?.();
     audio.src = audioUrl;
-    audio.currentTime = 0;
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.catch((err: any) => {
-        if (err?.name === 'AbortError') return;
+        if (err?.name === 'AbortError') return; // superseded by a newer clip
         console.warn('[tts] web audio play() rejected (falling back to device TTS):', err);
         if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
       });
