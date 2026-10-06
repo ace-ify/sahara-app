@@ -43,6 +43,23 @@ export const API_BASE_URL = getBackendBaseUrl();
 // degraded states instead of fabricated data.
 let backendReachable: boolean | null = null;
 
+/** Poll: is an admin-initiated follow-up call ringing on this channel? */
+export async function checkIncomingFollowup(channel: string): Promise<{
+  status: string;
+  incoming: boolean;
+  call?: { call_id: string; patient_name: string; note: string | null } | null;
+}> {
+  try {
+    const res = await fetchWithTimeout(
+      `${getBackendBaseUrl()}/api/admin/followup/incoming?channel=${encodeURIComponent(channel)}`,
+      {},
+      2500,
+    );
+    if (res.ok) return await res.json();
+  } catch {}
+  return { status: 'offline', incoming: false, call: null };
+}
+
 export async function checkBackendHealth(force = false): Promise<boolean> {
   if (!force && backendReachable !== null) return backendReachable;
   try {
@@ -170,6 +187,7 @@ export async function startAgent(
   outputAudioCodec?: string,
   lang: string = 'hi',
   context?: Array<{ role: string; content: string }>,
+  profile?: { patient?: string; caregiverPhone?: string },
 ): Promise<{ agent_id: string; channel_name: string; status: string }> {
   const payload: any = { channelName, rtcUid, userUid, lang };
   if (context && context.length > 0) {
@@ -178,6 +196,10 @@ export async function startAgent(
   if (outputAudioCodec) {
     payload.parameters = { output_audio_codec: outputAudioCodec };
   }
+  // Profile → auto-registers the patient on the admin dashboard (keyed by
+  // channel) so admin follow-up calls can ring this app.
+  if (profile?.patient) payload.patient = profile.patient;
+  if (profile?.caregiverPhone) payload.caregiver_phone = profile.caregiverPhone;
 
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/startAgent`, {
@@ -276,13 +298,15 @@ export async function resetAllData(): Promise<{ status: string; message: string 
 export async function scanPrescription(
   text?: string,
   imageBase64?: string,
-): Promise<{ status: string; medicines: any[] }> {
+): Promise<{ status: string; medicines: any[]; source?: string; message?: string }> {
   try {
+    // Vision-model round trip: 45s server-side, so allow a generous client
+    // timeout — a tight one would cut off real OCR mid-flight.
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/scan_prescription`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, image_base64: imageBase64 }),
-    }, 10000);
+    }, 60000);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[scan] server unreachable:', err);

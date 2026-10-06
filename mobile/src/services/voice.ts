@@ -357,9 +357,11 @@ export function useAgoraVoice() {
       setChannelName(ch);
 
       // 2. Start Agora Cloud Conversational AI Agent, carrying the recent
-      //    conversation so the fresh agent session remembers prior calls.
+      //    conversation so the fresh agent session remembers prior calls, and
+      //    the profile so the app self-registers on the admin dashboard.
       const context = toHistory(messagesRef.current, 10);
-      const res = await startAgent(ch, agentRtcUid, userUid, undefined, lang, context);
+      const profile = await getProfileContext();
+      const res = await startAgent(ch, agentRtcUid, userUid, undefined, lang, context, profile);
       if (res?.agent_id) {
         setAgentId(res.agent_id);
       }

@@ -103,6 +103,10 @@ class StartAgentRequest(BaseModel):
     lang: Optional[str] = "hi"
     # Recent conversation turns so a fresh agent session remembers prior calls
     context: Optional[list] = None
+    # Patient identity (from the mobile app's onboarding profile) — auto-
+    # registers the patient on the admin dashboard keyed by this channel.
+    patient: Optional[str] = None
+    caregiver_phone: Optional[str] = None
 
 
 class StopAgentRequest(BaseModel):
@@ -186,6 +190,13 @@ async def start_agent(request: StartAgentRequest):
             output_audio_codec=output_audio_codec,
             lang=request.lang or "hi",
             context=request.context,
+        )
+        # Auto-register this mobile patient on the admin dashboard (keyed by
+        # channel, upsert) so "Call now" can ring the app later.
+        _register_patient_by_channel(
+            name=request.patient,
+            caregiver_phone=request.caregiver_phone,
+            channel=request.channelName,
         )
         return {"code": 0, "msg": "success", "data": result}
     except Exception as e:
@@ -510,38 +521,71 @@ class ScanPrescriptionRequest(BaseModel):
 @router.post("/api/scan_prescription")
 async def scan_prescription_endpoint(req: ScanPrescriptionRequest):
     """
-    Extract medicine names, dosage, timing, and Jan Aushadhi generic equivalents
-    from prescription text or OCR using Groq LLM.
+    Real prescription reading: sends the captured photo to the vision-capable
+    LLM (image + extraction prompt), returning typed medicines for the user
+    to confirm. Text-only input still works when no image is provided.
     """
-    input_text = req.text or "Prescription image text"
     groq_key = os.getenv("GROQ_API_KEY", "")
     if not groq_key:
-        return {"status": "success", "medicines": []}
+        return {"status": "error", "message": "GROQ_API_KEY not configured", "medicines": []}
+    if not (req.image_base64 or "").strip() and not (req.text or "").strip():
+        return {"status": "error", "message": "image_base64 or text is required", "medicines": []}
 
-    prompt = f"""You are an Indian medical prescription & chemist bill parser.
-Analyze this prescription / medicine text:
-"{input_text}"
+    prompt = """You are an Indian medical prescription & chemist bill reader.
+Look at this prescription photo (or the text below) and extract every medicine you can genuinely read.
 
-Extract all medicines found. For each medicine, provide:
+Rules:
+- Only list medicines you can actually see — never guess or invent.
+- Include dosage, frequency, and timing as written; use Hindi for timing/purpose.
+- If a field is unreadable, use "डॉक्टर अनुसार".
+
+For each medicine provide:
 - id: unique string
-- name: medicine brand or generic name
+- name: medicine brand or generic name exactly as written
 - dosage: e.g. "500mg", "5mg", "10ml"
 - timing: in Hindi e.g. "सुबह नाश्ते के बाद", "रात खाने के बाद"
 - purpose: in Hindi e.g. "ब्लड प्रेशर", "शुगर", "दर्द"
 - frequency: e.g. "दिन में 1 बार", "दिन में 2 बार"
 - confirmed: true
 
-Return ONLY valid JSON format:
-{{"medicines": [ {{"id": "m1", "name": "...", "dosage": "...", "timing": "...", "purpose": "...", "frequency": "...", "confirmed": true}} ]}}
+Return ONLY valid JSON:
+{"medicines": [ {"id": "m1", "name": "...", "dosage": "...", "timing": "...", "purpose": "...", "frequency": "...", "confirmed": true} ]}
+
+Prescription text (may be empty when a photo is provided):
 """
+
+    # Build multimodal content: image part + text part when a photo exists.
+    content: Any
+    if (req.image_base64 or "").strip():
+        b64 = req.image_base64.strip()
+        # Strip a data-URL prefix if the client sent one.
+        if b64.startswith("data:"):
+            b64 = b64.split(",", 1)[-1]
+        image_part = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        }
+        text_part = {"type": "text", "text": prompt + (req.text or "")}
+        content = [image_part, text_part]
+    else:
+        content = [{"type": "text", "text": prompt + (req.text or "")}]
+
+    # Vision model when an image is present (qwen/qwen3.8-27b is multimodal);
+    # the configured GROQ_MODEL for text-only parsing.
+    model = (
+        os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+        if (req.image_base64 or "").strip()
+        else os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    )
+
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             r = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                 json={
-                    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "messages": [{"role": "user", "content": prompt}],
+                    "model": model,
+                    "messages": [{"role": "user", "content": content}],
                     "temperature": 0.1,
                     "response_format": {"type": "json_object"}
                 }
@@ -549,10 +593,13 @@ Return ONLY valid JSON format:
             if r.status_code == 200:
                 parsed = r.json()["choices"][0]["message"]["content"]
                 data = json.loads(parsed)
-                return {"status": "success", "medicines": data.get("medicines", [])}
+                medicines = data.get("medicines", [])
+                # Model must not fabricate: empty list is a valid answer.
+                return {"status": "success", "source": "image" if (req.image_base64 or "").strip() else "text", "medicines": medicines}
+            logger.warning("Prescription scan model error status=%s body=%s", r.status_code, r.text[:300])
     except Exception as e:
         logger.warning("Prescription scan error: %s", e)
-    return {"status": "success", "medicines": []}
+    return {"status": "error", "message": "vision model request failed", "medicines": []}
 
 
 @router.get("/api/facility")
@@ -1076,6 +1123,217 @@ async def transcribe_endpoint(
     except Exception as e:
         logger.exception("STT request error")
         raise HTTPException(status_code=502, detail=f"STT error: {e}")
+
+
+# --- Admin Dashboard: patients, risk status, outbound follow-up calls ---
+
+class PatientRecord(BaseModel):
+    id: str
+    name: str
+    caregiver_phone: Optional[str] = None
+    channel: str  # voice channel the patient's app joins
+
+
+# Registered patients (dashboard-managed + mobile self-registration).
+# ponytail: in-memory dict, single demo deployment — swap for a real store
+# when multi-tenant.
+_PATIENTS: Dict[str, Dict[str, Any]] = {}
+
+# Outbound follow-up calls: one record per "Call now" press.
+_FOLLOWUP_CALLS: Dict[str, Dict[str, Any]] = {}
+
+
+def _register_patient_by_channel(
+    name: Optional[str], caregiver_phone: Optional[str], channel: str
+) -> Dict[str, Any]:
+    """Upsert a patient keyed by their stable voice channel."""
+    name = (name or "").strip() or "मरीज़"
+    phone = (caregiver_phone or "").strip() or None
+    for p in _PATIENTS.values():
+        if p["channel"] == channel:
+            # Keep freshest profile info.
+            p["name"] = name
+            p["caregiver_phone"] = phone or p.get("caregiver_phone")
+            return p
+    pid = f"pat-{channel}"
+    _PATIENTS[pid] = {
+        "id": pid,
+        "name": name,
+        "caregiver_phone": phone,
+        "channel": channel,
+    }
+    return _PATIENTS[pid]
+
+
+def _patient_risk(patient: Dict[str, Any]) -> Dict[str, Any]:
+    """Risk from real signals: unresolved incidents, latest vitals, missed doses."""
+    inc = dispatch_ladder.get(patient["channel"])
+    incident_open = inc is not None and inc.status in ("dispatching", "acknowledged")
+    meds = tools.get_medications()
+    pending = meds.get("pending_count", 0)
+    hist = tools.get_vitals_history()
+    recent_bp = None
+    for h in hist.get("history", []):
+        if "bp" in str(h.get("type", "")).lower() or "रक्तचाप" in str(h.get("type", "")):
+            recent_bp = h
+            break
+    level = "green"
+    reasons = ["no open incidents, vitals in range"]
+    if incident_open:
+        level = "red"
+        reasons = [f"active emergency: {inc.reason}"]
+    elif pending > 0:
+        level = "amber"
+        reasons = [f"{pending} dose(s) pending today"]
+    elif recent_bp and recent_bp.get("status") == "warning":
+        level = "amber"
+        reasons = [f"recent vitals warning: {recent_bp.get('value')} {recent_bp.get('unit', '')}"]
+    return {"level": level, "reasons": reasons, "pending_doses": pending}
+
+
+@router.get("/api/admin/patients")
+async def admin_list_patients():
+    """Patient list with live risk status for the admin dashboard."""
+    out = []
+    for p in _PATIENTS.values():
+        out.append({**p, "risk": _patient_risk(p)})
+    return {"status": "success", "count": len(out), "patients": out}
+
+
+class RegisterPatientRequest(BaseModel):
+    name: str
+    caregiver_phone: Optional[str] = None
+    channel: Optional[str] = None
+
+
+@router.post("/api/admin/patients")
+async def admin_register_patient(req: RegisterPatientRequest):
+    """Register (or upsert) a patient for the dashboard."""
+    channel = (req.channel or "").strip() or f"followup-{req.name.strip() or 'patient'}"
+    patient = _register_patient_by_channel(req.name, req.caregiver_phone, channel)
+    return {"status": "success", "patient": patient}
+
+
+class StartFollowupRequest(BaseModel):
+    patient_id: str
+    note: Optional[str] = None  # reason for the call
+
+
+@router.post("/api/admin/followup/call")
+async def admin_start_followup_call(req: StartFollowupRequest):
+    """
+    Start the outbound check-in: spins up the SAME Agora conversational agent
+    in the patient's channel. The patient's app (already joined / auto-joins)
+    hears the agent speak first. SIMULATED (labeled): this rings the patient's
+    app over Agora RTC, not the PSTN phone number — real dial-out needs Agora
+    Agent Studio + Elastic SIP Trunk (telephony).
+    """
+    patient = _PATIENTS.get(req.patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="patient not found")
+    if agent is None:
+        raise HTTPException(status_code=500, detail="agent not configured")
+
+    channel = patient["channel"]
+    agent_uid = 7000001
+    user_uid = 7000002
+    try:
+        res = await agent.start(
+            channel_name=channel,
+            agent_uid=agent_uid,
+            user_uid=user_uid,
+            lang="hi",
+            context=[
+                {
+                    "role": "user",
+                    "content": req.note
+                    or "डॉक्टर/एडमिन की ओर से फॉलो-अप कॉल — सेहत का हाल पूछें और दवा नियमितता जाँचें",
+                }
+            ],
+        )
+    except Exception as e:
+        _log_route_error("/api/admin/followup/call", e, patient=req.patient_id)
+        raise _to_http_error(e)
+
+    call_id = res.get("agent_id") or f"call-{channel}"
+    _FOLLOWUP_CALLS[call_id] = {
+        "call_id": call_id,
+        "patient_id": req.patient_id,
+        "patient_name": patient["name"],
+        "channel": channel,
+        "note": req.note,
+        "status": "in_progress",
+        "outcome": None,
+        "transcript": [],
+        "started_at": time.time(),
+    }
+    return {
+        "status": "success",
+        "simulated": True,  # rings the patient's app, not a PSTN number
+        "transport": "agora-rtc",
+        "call": _FOLLOWUP_CALLS[call_id],
+    }
+
+
+class FollowupOutcomeRequest(BaseModel):
+    call_id: str
+    outcome: str  # "fine" | "needs_review" | "escalate"
+    summary: Optional[str] = None
+
+
+@router.post("/api/admin/followup/outcome")
+async def admin_set_followup_outcome(req: FollowupOutcomeRequest):
+    """Record the typed post-call outcome; 'escalate' dispatches the emergency ladder."""
+    call = _FOLLOWUP_CALLS.get(req.call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="call not found")
+
+    call["status"] = "completed"
+    call["outcome"] = req.outcome
+    call["summary"] = req.summary or ""
+    call["ended_at"] = time.time()
+
+    if req.outcome == "escalate":
+        patient = _PATIENTS.get(call["patient_id"], {})
+        contacts = [
+            emergency.Contact(
+                name=f"{patient.get('name', 'मरीज़')} — केयरगिवर / Family Caregiver",
+                kind="caregiver",
+                endpoint=patient.get("caregiver_phone")
+                or os.getenv("CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210")),
+            ),
+            emergency.Contact(name="108 / 112 एम्बुलंस आपातकालीन सेवा (EMS)", kind="ambulance", endpoint="108"),
+        ]
+        incident = emergency.Incident(
+            channel=call["channel"],
+            reason=req.summary or "Follow-up call escalated by admin",
+            severity="critical",
+            patient=patient.get("name", "मरीज़"),
+            contacts=contacts,
+        )
+        await dispatch_ladder.trigger(incident)
+
+    return {"status": "success", "call": call}
+
+
+@router.get("/api/admin/followup/calls")
+async def admin_list_followup_calls():
+    """Recent follow-up calls with typed outcomes for the dashboard."""
+    calls = sorted(_FOLLOWUP_CALLS.values(), key=lambda c: c.get("started_at", 0), reverse=True)
+    return {"status": "success", "count": len(calls), "calls": calls}
+
+
+@router.get("/api/admin/followup/incoming")
+async def admin_incoming_followup(channel: str = Query(...)):
+    """
+    Mobile-app poll: is there an in-progress admin follow-up call ringing on
+    this channel? The app answers by starting its voice session (which joins
+    the channel and speaks with the agent).
+    """
+    for call in _FOLLOWUP_CALLS.values():
+        if call["channel"] == channel and call["status"] == "in_progress":
+            return {"status": "success", "incoming": True, "call": call}
+    return {"status": "success", "incoming": False, "call": None}
 
 
 app.include_router(router)

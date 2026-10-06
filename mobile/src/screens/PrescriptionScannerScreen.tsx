@@ -62,6 +62,7 @@ export default function PrescriptionScannerScreen() {
   const [scannedItems, setScannedItems] = useState<ScannedMedicine[]>([]);
   const [analyzingStage, setAnalyzingStage] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   // Manual Medicine Entry Form state
   const [showManualForm, setShowManualForm] = useState(false);
@@ -267,9 +268,12 @@ export default function PrescriptionScannerScreen() {
     setStep(2);
     setIsProcessing(true);
     setAnalyzingStage(1);
+    setScanError(null);
 
-    const stageTimer1 = setTimeout(() => setAnalyzingStage(2), 600);
-    const stageTimer2 = setTimeout(() => setAnalyzingStage(3), 1200);
+    // Stage progression is honest: 2 & 3 tick while the real vision request
+    // is in flight, and the final stage flips only when the model responds.
+    const stageTimer1 = setTimeout(() => setAnalyzingStage(2), 1200);
+    const stageTimer2 = setTimeout(() => setAnalyzingStage(3), 3500);
 
     try {
       const res = await scanPrescription(undefined, selectedImageBase64 || undefined);
@@ -277,24 +281,48 @@ export default function PrescriptionScannerScreen() {
       clearTimeout(stageTimer2);
       setAnalyzingStage(4);
 
-      if (res && res.status === 'success' && res.medicines && res.medicines.length > 0) {
-        const parsed: ScannedMedicine[] = res.medicines.map((m: any, idx: number) => ({
-          id: `m-${Date.now()}-${idx}`,
-          name: m.name,
-          dosage: m.dosage || '',
-          timing: m.timing || (lang === 'hi' ? 'सुबह · नाश्ते के बाद' : 'Morning · after food'),
-          timingSource: lang === 'hi' ? 'पर्चा विश्लेषण' : 'Prescription analysis',
-          purpose: m.purpose || '',
-          frequency: m.frequency || (lang === 'hi' ? 'प्रतिदिन' : 'Daily'),
-          status: 'confirmed',
-          confirmed: true,
-        }));
-        setScannedItems(parsed);
+      if (res && res.status === 'success') {
+        if (res.medicines && res.medicines.length > 0) {
+          const parsed: ScannedMedicine[] = res.medicines
+            .filter((m: any) => (m?.name || '').trim())
+            .map((m: any, idx: number) => ({
+              id: `m-${Date.now()}-${idx}`,
+              name: String(m.name).trim(),
+              dosage: m.dosage || '',
+              timing: m.timing || (lang === 'hi' ? 'सुबह · नाश्ते के बाद' : 'Morning · after food'),
+              timingSource: lang === 'hi' ? 'पर्चा विश्लेषण' : 'Prescription analysis',
+              purpose: m.purpose || '',
+              frequency: m.frequency || (lang === 'hi' ? 'प्रतिदिन' : 'Daily'),
+              status: 'confirmed',
+              // Model proposes, the user confirms — never auto-accepted.
+              confirmed: false,
+            }));
+          setScannedItems(parsed);
+        } else {
+          // Model read the image and found nothing readable — honest empty.
+          setScannedItems([]);
+          setScanError(
+            lang === 'hi'
+              ? 'तस्वीर में कोई दवा नहीं मिली — कृपया साफ़ और पास से फ़ोटो लें।'
+              : 'No medicines found in the image — please retake the photo closer and in focus.',
+          );
+        }
       } else {
+        // Vision call failed server-side.
         setScannedItems([]);
+        setScanError(
+          lang === 'hi'
+            ? 'पर्चा पढ़ा नहीं जा सका। कृपया दोबारा कोशिश करें या हाथ से दवा जोड़ें।'
+            : 'Could not read the prescription. Please try again or add medicines manually.',
+        );
       }
     } catch {
       setScannedItems([]);
+      setScanError(
+        lang === 'hi'
+          ? 'सर्वर से संपर्क नहीं — कृपया इंटरनेट जाँचें।'
+          : 'Server unreachable — please check your connection.',
+      );
     } finally {
       setIsProcessing(false);
       setTimeout(() => {
@@ -716,9 +744,10 @@ export default function PrescriptionScannerScreen() {
                   {lang === 'hi' ? 'कोई दवा नहीं मिली' : 'No Medicines Detected'}
                 </AppText>
                 <AppText variant="small" color={colors.textMuted} align="center" style={{ marginTop: 4, paddingHorizontal: 16 }}>
-                  {lang === 'hi'
-                    ? 'तस्वीर धुंधली हो सकती है। कृपया साफ़ फ़ोटो लें या सीधे हाथ से दवा जोड़ें।'
-                    : 'The image may be unclear. Please take a clearer photo or enter manually.'}
+                  {scanError ||
+                    (lang === 'hi'
+                      ? 'तस्वीर धुंधली हो सकती है। कृपया साफ़ फ़ोटो लें या सीधे हाथ से दवा जोड़ें।'
+                      : 'The image may be unclear. Please take a clearer photo or enter manually.')}
                 </AppText>
                 <View style={{ marginTop: space.md, width: '100%' }}>
                   <Button

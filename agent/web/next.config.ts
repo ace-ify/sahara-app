@@ -32,6 +32,10 @@ const nextConfig: NextConfig = {
         source: '/api/stopAgent',
         destination: `${backendUrl}/stopAgent`,
       },
+      {
+        source: '/api/admin/:path*',
+        destination: `${backendUrl}/api/admin/:path*`,
+      },
     ]
   },
 }

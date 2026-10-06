@@ -22,6 +22,9 @@ import { useNavigation } from '@react-navigation/native';
 import { AppText } from '../components/AppText';
 import { Icon } from '../components/Icon';
 import { NebulaVoiceOrb } from '../components/chat/NebulaVoiceOrb';
+import { FallAlertOverlay } from '../components/FallAlertOverlay';
+import { DailyCheckInCard } from '../components/DailyCheckInCard';
+import { IncomingCallOverlay } from '../components/IncomingCallOverlay';
 import { ChatDrawer } from '../components/chat/ChatDrawer';
 import { PressableScale } from '../components/PressableScale';
 import { FadeInView } from '../components/FadeInView';
@@ -479,6 +482,11 @@ export default function TalkScreen() {
 
   return (
     <View style={s.root}>
+      {/* Fall detection (PROTOTYPE): accelerometer jolt → "Are you okay?" by
+          voice → escalation on no answer. Includes a labeled demo chip. */}
+      <FallAlertOverlay channelName={channelName} />
+      {/* Admin-initiated follow-up call rings the app (simulated telephony) */}
+      {state === 'idle' && <IncomingCallOverlay onAnswer={() => toggleSession(lang)} />}
       <ChatDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -755,6 +763,9 @@ export default function TalkScreen() {
             </View>
 
             <View style={s.orbCenter}>{orb(orbBig)}</View>
+
+            {/* Proactive daily check-in: speaks first, then listens */}
+            <DailyCheckInCard />
 
             <View style={s.suggestWrap}>
               <AppText

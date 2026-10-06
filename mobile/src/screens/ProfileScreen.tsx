@@ -320,6 +320,14 @@ export default function ProfileScreen() {
         <AppText variant="body" color={colors.textMuted}>
           {t('settings_shake_sos')}
         </AppText>
+        {/* Doctor visit summary — one-page PDF of vitals + meds */}
+        <Button
+          label={lang === 'hi' ? '📄 डॉक्टर विज़िट सारांश (PDF)' : '📄 Doctor Visit Summary (PDF)'}
+          sub={lang === 'hi' ? 'हालिया वाइटल्स व दवाएँ — एक पेज' : 'Recent vitals & meds — one page'}
+          variant="outline"
+          onPress={() => nav.navigate('DoctorSummary')}
+          style={{ marginTop: space.md }}
+        />
       </Card>
 
       {/* Factory Reset & Complete Data Wipe */}

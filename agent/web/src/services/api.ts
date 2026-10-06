@@ -69,3 +69,85 @@ export async function stopAgent(agentId: string): Promise<void> {
     throw new Error(error.detail || `HTTP ${response.status}`)
   }
 }
+
+// --- Admin dashboard: patients, risk, outbound follow-up calls ---
+
+export interface PatientRisk {
+  level: 'green' | 'amber' | 'red'
+  reasons: string[]
+  pending_doses: number
+}
+
+export interface AdminPatient {
+  id: string
+  name: string
+  caregiver_phone: string | null
+  channel: string
+  risk: PatientRisk
+}
+
+export interface FollowupCall {
+  call_id: string
+  patient_id: string
+  patient_name: string
+  channel: string
+  note: string | null
+  status: string
+  outcome: string | null
+  summary: string | null
+  started_at: number
+  ended_at?: number
+}
+
+export async function listPatients(): Promise<AdminPatient[]> {
+  const response = await fetch(`${API_BASE_URL}/admin/patients`)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const result = await response.json()
+  return result.patients || []
+}
+
+export async function registerPatient(name: string, caregiverPhone?: string, channel?: string): Promise<AdminPatient> {
+  const response = await fetch(`${API_BASE_URL}/admin/patients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, caregiver_phone: caregiverPhone || null, channel: channel || null }),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  return (await response.json()).patient
+}
+
+export async function startFollowupCall(patientId: string, note?: string): Promise<{ call: FollowupCall; simulated: boolean }> {
+  const response = await fetch(`${API_BASE_URL}/admin/followup/call`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patient_id: patientId, note: note || null }),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  return await response.json()
+}
+
+export async function setFollowupOutcome(callId: string, outcome: 'fine' | 'needs_review' | 'escalate', summary?: string): Promise<FollowupCall> {
+  const response = await fetch(`${API_BASE_URL}/admin/followup/outcome`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ call_id: callId, outcome, summary: summary || null }),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  return (await response.json()).call
+}
+
+export async function listFollowupCalls(): Promise<FollowupCall[]> {
+  const response = await fetch(`${API_BASE_URL}/admin/followup/calls`)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const result = await response.json()
+  return result.calls || []
+}

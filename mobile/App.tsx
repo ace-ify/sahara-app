@@ -21,6 +21,7 @@ import CaregiverPairingScreen from './src/screens/CaregiverPairingScreen';
 import CareHistoryScreen from './src/screens/CareHistoryScreen';
 import CaregiverSosScreen from './src/screens/CaregiverSosScreen';
 import PrescriptionScannerScreen from './src/screens/PrescriptionScannerScreen';
+import DoctorSummaryScreen from './src/screens/DoctorSummaryScreen';
 import { GluestackUIProvider } from './components/ui/gluestack-ui-provider';
 import { initSkiaWeb } from './src/services/skiaInit';
 
@@ -87,6 +88,7 @@ function AppContent() {
         <Stack.Screen name="CareHistory" component={CareHistoryScreen} />
         <Stack.Screen name="CaregiverPairing" component={CaregiverPairingScreen} />
         <Stack.Screen name="PrescriptionScanner" component={PrescriptionScannerScreen} />
+        <Stack.Screen name="DoctorSummary" component={DoctorSummaryScreen} />
         <Stack.Screen
           name="Emergency"
           component={EmergencyScreen}
