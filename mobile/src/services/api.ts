@@ -17,7 +17,9 @@ export function getBackendBaseUrl(): string {
     }
     return 'http://localhost:8000';
   }
-  // Try to extract IP from Metro bundle URL (e.g. http://192.168.29.247:8082/...)
+  // Derive the backend host from the Metro bundler URL so any machine serving
+  // the app also serves the API (no hardcoded developer-LAN IP that breaks on
+  // demo Wi-Fi). Falls back to the Android emulator host-loopback alias.
   try {
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
     if (scriptURL) {
@@ -27,11 +29,40 @@ export function getBackendBaseUrl(): string {
       }
     }
   } catch {}
-  // Default to developer's LAN host IP
-  return 'http://192.168.29.247:8000';
+  // Metro served from localhost (Android emulator) → host machine's alias.
+  if (Platform.OS === 'android') {
+    return 'http://10.0.2.2:8000';
+  }
+  return 'http://localhost:8000';
 }
 
 export const API_BASE_URL = getBackendBaseUrl();
+
+// Lightweight reachability probe backing the on-screen connection indicator,
+// so the UI can distinguish "server slow" from "server gone" and show honest
+// degraded states instead of fabricated data.
+let backendReachable: boolean | null = null;
+
+export async function checkBackendHealth(force = false): Promise<boolean> {
+  if (!force && backendReachable !== null) return backendReachable;
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch(`${getBackendBaseUrl()}/get_config`, { signal: controller.signal });
+      backendReachable = res.ok;
+    } finally {
+      clearTimeout(id);
+    }
+  } catch {
+    backendReachable = false;
+  }
+  return backendReachable;
+}
+
+export function isBackendReachable(): boolean | null {
+  return backendReachable;
+}
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
   const controller = new AbortController();
@@ -175,7 +206,13 @@ export async function stopAgent(agentId: string): Promise<void> {
   } catch {}
 }
 
-// --- Companion Tools Endpoints (Real User Data — Zero Mock Defaults) ---
+// --- Companion Tools Endpoints (Real User Data — honest offline states) ---
+
+/**
+ * Offline/empty marker: screens check this to render an honest empty state
+ * (e.g. "सर्वर से संपर्क नहीं हो पा रहा") instead of fabricated data.
+ */
+export const OFFLINE_STATUS = 'offline';
 
 export async function getMedications(): Promise<{
   status: string;
@@ -191,39 +228,17 @@ export async function getMedications(): Promise<{
       const data = await res.json();
       if (data && data.medications && data.medications.length > 0) return data;
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[meds] server unreachable:', err);
+  }
+  // Honest offline state — no fabricated medicine list.
   return {
-    status: 'success',
-    total_medications: 3,
-    pending_count: 2,
-    taken_count: 1,
-    medications: [
-      {
-        id: 'med-1',
-        name: 'Amlodipine (एम्लोडिपिन)',
-        dosage: '5mg',
-        timing: 'सुबह 8:00 AM · नाश्ते के बाद',
-        purpose: 'उच्च रक्तचाप नियंत्रण (BP)',
-        taken_today: true,
-      },
-      {
-        id: 'med-2',
-        name: 'Metformin (मेटफ़ॉर्मिन)',
-        dosage: '500mg',
-        timing: 'दोपहर 1:30 PM · भोजन के साथ',
-        purpose: 'मधुमेह नियंत्रण (Sugar)',
-        taken_today: false,
-      },
-      {
-        id: 'med-3',
-        name: 'Atorvastatin (अटोर्वास्टेटिन)',
-        dosage: '10mg',
-        timing: 'रात 9:00 PM · सोने से पहले',
-        purpose: 'कोलेस्ट्रॉल व हृदय सुरक्षा',
-        taken_today: false,
-      },
-    ],
-    message_hi: 'आज की 3 में से 1 दवा ली जा चुकी है।',
+    status: OFFLINE_STATUS,
+    total_medications: 0,
+    pending_count: 0,
+    taken_count: 0,
+    medications: [],
+    message_hi: 'सर्वर से संपर्क नहीं हो पा रहा। कृपया इंटरनेट जाँचें।',
   };
 }
 
@@ -240,8 +255,10 @@ export async function addMedication(
       body: JSON.stringify({ name, dosage, timing, purpose }),
     });
     if (res.ok) return await res.json();
-  } catch {}
-  return { status: 'success', message_hi: 'दवा जोड़ दी गई है।' };
+  } catch (err) {
+    console.warn('[meds] add medication unreachable:', err);
+  }
+  return { status: OFFLINE_STATUS, message_hi: 'कनेक्शन नहीं — दवा सहेजी नहीं जा सकी।' };
 }
 
 export async function resetAllData(): Promise<{ status: string; message: string }> {
@@ -250,8 +267,10 @@ export async function resetAllData(): Promise<{ status: string; message: string 
       method: 'POST',
     });
     if (res.ok) return await res.json();
-  } catch {}
-  return { status: 'success', message: 'All backend data cleared' };
+  } catch (err) {
+    console.warn('[reset] server unreachable:', err);
+  }
+  return { status: OFFLINE_STATUS, message: 'Backend unreachable — local data still cleared' };
 }
 
 export async function scanPrescription(
@@ -265,8 +284,10 @@ export async function scanPrescription(
       body: JSON.stringify({ text, image_base64: imageBase64 }),
     }, 10000);
     if (res.ok) return await res.json();
-  } catch {}
-  return { status: 'success', medicines: [] };
+  } catch (err) {
+    console.warn('[scan] server unreachable:', err);
+  }
+  return { status: OFFLINE_STATUS, medicines: [] };
 }
 
 export async function logMedication(name: string): Promise<{
@@ -282,12 +303,14 @@ export async function logMedication(name: string): Promise<{
       body: JSON.stringify({ name }),
     });
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[meds] log unreachable:', err);
+  }
   return {
-    status: 'success',
+    status: OFFLINE_STATUS,
     medication: name,
-    logged_at: 'अभी',
-    message_hi: `आपकी दवा (${name}) नोट कर ली गई है।`,
+    logged_at: '—',
+    message_hi: 'कनेक्शन नहीं — दवा सर्वर पर दर्ज नहीं हो सकी।',
   };
 }
 
@@ -312,14 +335,16 @@ export async function getFacilities(
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/facilities?${params.toString()}`);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[facilities] server unreachable:', err);
+  }
 
   return {
-    status: 'success',
+    status: OFFLINE_STATUS,
     count: 0,
     nearest: null,
     facilities: [],
-    message_hi: 'नज़दीकी अस्पताल या क्लिनिक खोजे जा रहे हैं...',
+    message_hi: 'सर्वर से संपर्क नहीं — नज़दीकी अस्पताल खोज रहे हैं…',
   };
 }
 
@@ -336,14 +361,16 @@ export async function getMedicinePrice(name: string): Promise<{
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/medicine_price?name=${encodeURIComponent(name)}`);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[price] server unreachable:', err);
+  }
   return {
-    status: 'success',
-    medicine: 'Amlodipine',
-    branded_price: '₹48 (Amlopres)',
-    generic_price: '₹8 (Jan Aushadhi)',
-    savings_percentage: '83%',
-    message_hi: 'जन औषधि केंद्र पर एम्लोडिपिन केवल ₹8 में मिलती है, जिससे 83% बचत होगी।',
+    status: OFFLINE_STATUS,
+    medicine: name,
+    branded_price: '—',
+    generic_price: '—',
+    savings_percentage: '—',
+    message_hi: 'कनेक्शन नहीं — कीमत की जानकारी उपलब्ध नहीं।',
   };
 }
 
@@ -358,14 +385,16 @@ export async function explainScheme(name: string): Promise<{
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/scheme?name=${encodeURIComponent(name)}`);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[scheme] server unreachable:', err);
+  }
   return {
-    status: 'success',
-    scheme: 'आयुष्मान भारत (PM-JAY)',
-    summary: 'प्रति परिवार प्रति वर्ष ₹5 लाख तक का मुफ्त इलाज।',
-    details: 'सरकारी और पैनल वाले अस्पतालों में भर्ती पर पूरा इलाज मुफ्त।',
-    helpline: '14555',
-    message_hi: 'आयुष्मान भारत योजना के तहत ₹5 लाख तक का इलाज मुफ्त मिलता है। हेल्पलाइन 14555 पर संपर्क कर सकते हैं।',
+    status: OFFLINE_STATUS,
+    scheme: name,
+    summary: '—',
+    details: '—',
+    helpline: '—',
+    message_hi: 'कनेक्शन नहीं — योजना की जानकारी उपलब्ध नहीं।',
   };
 }
 
@@ -386,14 +415,18 @@ export async function logVital(
       body: JSON.stringify({ vital_type: vitalType, value, unit }),
     });
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[vitals] log unreachable:', err);
+  }
 
+  // Offline: still give the local reading interpretation (no network claim),
+  // but mark status so the screen can show the unsaved state honestly.
   let msg = `आपकी रीडिंग (${value} ${unit}) दर्ज कर ली गई है।`;
   if (vitalType.toLowerCase().includes('bp')) {
     const sys = parseInt(value.split('/')[0]) || 120;
     msg = sys >= 140 ? `आपका BP ${value} थोड़ा बढ़ा हुआ है। आराम करें और पानी पिएं।` : `आपका BP ${value} सामान्य है।`;
   }
-  return { status: 'success', vital_type: vitalType, value, message_hi: msg };
+  return { status: OFFLINE_STATUS, vital_type: vitalType, value, message_hi: msg };
 }
 
 export async function escalateCaregiver(
@@ -534,6 +567,7 @@ export async function sendChatMessage(
   channel: string = 'default',
   lang: string = 'hi',
   history: Array<{ role: string; content: string }> = [],
+  profile?: { patient?: string; caregiverPhone?: string },
 ): Promise<{ text: string; card?: any }> {
   try {
     const res = await fetchWithTimeout(
@@ -549,6 +583,10 @@ export async function sendChatMessage(
           messages: [...history, { role: 'user', content: text }],
           stream: false,
           lang,
+          // Profile context so a voice-detected emergency dispatches to the
+          // real caregiver instead of a server-side placeholder contact.
+          patient: profile?.patient || undefined,
+          caregiver_phone: profile?.caregiverPhone || undefined,
         }),
       },
       20000,
@@ -587,29 +625,46 @@ export async function clearLatestCard(channel?: string): Promise<void> {
 
 // --- Emergency Dispatch Endpoints ---
 
+/**
+ * Trigger the emergency dispatch ladder. `caregiverPhone` (from onboarding)
+ * routes the WhatsApp alert to the real family member. Offline, returns an
+ * incident marked UNDELIVERED — never a fabricated "alerted ✓" for a message
+ * that was never sent.
+ */
 export async function triggerEmergency(
   channel: string,
   reason: string,
-  patient: string = 'मरीज़ (रामपुर)',
+  patient: string = 'मरीज़',
+  caregiverPhone?: string,
 ): Promise<{ status: string; incident: IncidentSnapshot; card?: any }> {
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/emergency/trigger`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channel, reason, severity: 'critical', patient }),
-    }, 2000);
+      body: JSON.stringify({
+        channel,
+        reason,
+        severity: 'critical',
+        patient,
+        caregiver_phone: caregiverPhone || undefined,
+      }),
+    }, 4000);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] dispatch server unreachable:', err);
+  }
 
+  // Honest offline state: nothing was sent. The on-screen 108 dialer is the
+  // patient's live lifeline here.
   return {
-    status: 'triggered',
+    status: 'offline',
     incident: {
       channel,
       reason,
       severity: 'critical',
       patient,
       status: 'dispatching',
-      attempts: [{ seq: 0, contact: 'रमेश (बेटा)', kind: 'caregiver', delivered: true, ts: Date.now() }],
+      attempts: [],
     },
   };
 }

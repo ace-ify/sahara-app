@@ -32,6 +32,18 @@ let speechGeneration = 0;
 
 function speakWithDeviceTts(text: string, lang: string, cb?: VoiceCallbacks) {
   try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+      utterance.pitch = 1.05;
+      utterance.rate = 0.95;
+      utterance.onend = () => cb?.onDone?.();
+      utterance.onerror = () => cb?.onError?.();
+      cb?.onStart?.();
+      window.speechSynthesis.speak(utterance);
+      return;
+    }
     Speech.speak(text, {
       language: lang === 'hi' ? 'hi-IN' : 'en-IN',
       pitch: 1.05,
@@ -69,28 +81,42 @@ export function stopNaturalVoice() {
   }
 }
 
-// Pre-warmed audio element for Web to overcome browser autoplay restrictions
-let prewarmedWebAudio: any = null;
+// Shared audio element and Web Audio API context primed on user interaction
+let sharedAudioElement: HTMLAudioElement | null = null;
+let webAudioContext: any = null;
 
-export function prewarmWebAudio() {
+export function primeWebAudio() {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return;
   try {
-    if (!prewarmedWebAudio) {
-      prewarmedWebAudio = new window.Audio();
+    if (!sharedAudioElement) {
+      sharedAudioElement = new window.Audio();
+      sharedAudioElement.crossOrigin = 'anonymous';
     }
-    // Silent 1-sample data URI primes the browser's user activation state
-    prewarmedWebAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    prewarmedWebAudio.load();
-    const p = prewarmedWebAudio.play();
-    if (p && typeof p.catch === 'function') {
-      p.catch(() => {});
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx && !webAudioContext) {
+      webAudioContext = new AudioCtx();
+    }
+    if (webAudioContext && webAudioContext.state === 'suspended') {
+      webAudioContext.resume().catch(() => {});
+    }
+    // Briefly prime media playback with tiny silent buffer
+    sharedAudioElement.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+    const p = sharedAudioElement.play();
+    if (p !== undefined) {
+      p.then(() => {
+        sharedAudioElement?.pause();
+      }).catch(() => {});
     }
   } catch {}
 }
 
+export function unlockWebAudio() {
+  primeWebAudio();
+}
+
 if (Platform.OS === 'web' && typeof window !== 'undefined') {
   const unlock = () => {
-    prewarmWebAudio();
+    primeWebAudio();
     window.removeEventListener('click', unlock);
     window.removeEventListener('touchstart', unlock);
     window.removeEventListener('keydown', unlock);
@@ -108,7 +134,7 @@ function playWebAudio(
   cb?: VoiceCallbacks,
 ) {
   try {
-    const audio = prewarmedWebAudio || new window.Audio();
+    const audio = sharedAudioElement || new window.Audio();
     audio.crossOrigin = 'anonymous';
     currentPlayer = audio;
 
@@ -120,11 +146,13 @@ function playWebAudio(
       if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
     };
 
-    audio.src = audioUrl;
     cb?.onStart?.();
+    audio.src = audioUrl;
+    audio.currentTime = 0;
     const playPromise = audio.play();
     if (playPromise !== undefined) {
-      playPromise.catch((err: unknown) => {
+      playPromise.catch((err: any) => {
+        if (err?.name === 'AbortError') return;
         console.warn('[tts] web audio play() rejected (falling back to device TTS):', err);
         if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
       });
@@ -279,9 +307,9 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
     return;
   }
 
-  // Prewarm audio element synchronously during user gesture window on Web
+  // Unlock audio context synchronously during user gesture window on Web
   if (Platform.OS === 'web') {
-    prewarmWebAudio();
+    unlockWebAudio();
   }
 
   stopNaturalVoice();
@@ -290,13 +318,28 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
   let audioUrl: string | null = null;
   let audioLengthSec = 0;
   try {
-    const res = await fetch(`${API_BASE_URL}/api/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: trimmed, lang }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/api/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed, lang }),
+      });
+      if (!res.ok) throw new Error(`primary tts error ${res.status}`);
+    } catch (primaryErr) {
+      // Automatic fallback: try secondary backend URL (Render if local, or localhost if remote)
+      const fallbackUrl = API_BASE_URL.includes('localhost')
+        ? 'https://sahara-sh0i.onrender.com/api/tts'
+        : 'http://localhost:8000/api/tts';
+      res = await fetch(fallbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed, lang }),
+      });
+      if (!res.ok) throw primaryErr;
+    }
+
     if (gen !== speechGeneration) return;
-    if (!res.ok) throw new Error(`tts endpoint responded ${res.status}`);
     const data = await res.json();
     audioUrl = data?.audio_url || data?.audioFile || null;
     audioLengthSec = Number(data?.audio_length) || 0;

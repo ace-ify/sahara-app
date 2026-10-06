@@ -383,10 +383,13 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
             active_channel,
         )
         # Parallel Dispatch: Contact 0 (Caregiver) + Contact 1 (108 EMS) fire concurrently at t=0
+        chat_patient = (payload.get("patient") or "").strip() or "मरीज़"
+        chat_caregiver_phone = (payload.get("caregiver_phone") or "").strip() or os.getenv(
+            "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210")
+        )
         contacts = [
-            emergency.Contact(name="रमेश (बेटा / Caregiver)", kind="caregiver", endpoint="+91 98765 00001"),
+            emergency.Contact(name=f"{chat_patient} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=chat_caregiver_phone),
             emergency.Contact(name="108 / 112 एम्बुलेंस आपातकालीन सेवा (EMS)", kind="ambulance", endpoint="108"),
-            emergency.Contact(name="नज़दीकी अस्पताल आपातकालीन कक्ष (City Hospital ER)", kind="clinic", endpoint="+91 98765 43210"),
         ]
         sbar = classification.sbar_brief or laya.build_sbar_brief(
             reason=classification.reason,
@@ -396,7 +399,7 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
             channel=active_channel,
             reason=classification.reason,
             severity=classification.severity,
-            patient="मरीज़",
+            patient=chat_patient,
             contacts=contacts,
             sbar_brief=sbar,
         )
@@ -727,27 +730,33 @@ class TriggerEmergencyRequest(BaseModel):
     reason: str
     severity: Optional[str] = "critical"
     patient: Optional[str] = "मरीज़"
+    # Caregiver WhatsApp number entered by the patient in onboarding —
+    # takes precedence over the server env default so the SOS alert
+    # reaches the real family member instead of a placeholder.
+    caregiver_phone: Optional[str] = None
 
 
 @router.post("/api/emergency/trigger")
 async def trigger_emergency(req: TriggerEmergencyRequest):
     """Trigger the multi-contact parallel emergency dispatch ladder without disconnecting the call."""
-    caregiver_phone = os.getenv("CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210"))
+    caregiver_phone = (req.caregiver_phone or "").strip() or os.getenv(
+        "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+91 98765 43210")
+    )
+    patient_name = (req.patient or "").strip() or "मरीज़"
     contacts = [
-        emergency.Contact(name="पूजा (बेटी / Primary Caregiver)", kind="caregiver", endpoint=caregiver_phone),
+        emergency.Contact(name=f"{patient_name} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=caregiver_phone),
         emergency.Contact(name="108 / 112 एम्बुलेंस आपातकालीन सेवा (EMS)", kind="ambulance", endpoint="108"),
-        emergency.Contact(name="नज़दीकी अस्पताल आपातकालीन कक्ष (City Hospital ER)", kind="clinic", endpoint="+91 98765 00001"),
     ]
     sbar = laya.build_sbar_brief(
         reason=req.reason,
         severity=req.severity or "critical",
-        patient_name=req.patient or "मरीज़",
+        patient_name=patient_name,
     )
     incident = emergency.Incident(
         channel=req.channel,
         reason=req.reason,
         severity=req.severity or "critical",
-        patient=req.patient or "मरीज़",
+        patient=patient_name,
         contacts=contacts,
         sbar_brief=sbar,
     )
@@ -948,8 +957,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 
 class TtsRequest(BaseModel):
-    text: str
-    lang: str = "hi"
+    text: Optional[str] = ""
+    lang: Optional[str] = "hi"
 
 
 @router.post("/api/tts")

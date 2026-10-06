@@ -26,6 +26,7 @@ import { ChatDrawer } from '../components/chat/ChatDrawer';
 import { PressableScale } from '../components/PressableScale';
 import { FadeInView } from '../components/FadeInView';
 import { useDictation } from '../services/stt';
+import { primeWebAudio, unlockWebAudio } from '../services/tts';
 import {
   HospitalCard,
   MedicationCard,
@@ -140,6 +141,7 @@ export default function TalkScreen() {
   const showDictationResult = useCallback((text: string, isLive: boolean) => {
     // Voice-turn capture: preview the transcript, then auto-commit.
     if (voiceTurnRef.current) {
+      inputTextRef.current = text;
       setInputText(text);
       if (isLive) {
         // Web SpeechRecognition streams interim results — commit after a
@@ -155,6 +157,7 @@ export default function TalkScreen() {
     }
     if (isLive) {
       // Web SpeechRecognition streams interim results — mirror them directly.
+      inputTextRef.current = text;
       setInputText(text);
       return;
     }
@@ -262,33 +265,68 @@ export default function TalkScreen() {
   const handleSendText = (textToSend?: string) => {
     const query = (textToSend || inputText).trim();
     if (!query && !attachedDoc) return;
+    if (typingRef.current) {
+      clearInterval(typingRef.current);
+      typingRef.current = null;
+    }
+    if (silenceTimer.current) {
+      clearTimeout(silenceTimer.current);
+      silenceTimer.current = null;
+    }
+    voiceTurnRef.current = false;
+    if (dictation.phase !== 'idle') {
+      dictation.stop();
+    }
     const finalMsg = attachedDoc
       ? `[संलग्न ${attachedDoc.type === 'image' ? 'तस्वीर' : 'दस्तावेज़'}: ${attachedDoc.name}] ${
           query || (lang === 'hi' ? 'कृपया इस पर्चे / रिपोर्ट की जाँच करें' : 'Please check this attached document/image')
         }`
       : query;
     setInputText('');
+    inputTextRef.current = '';
     setAttachedDoc(null);
     sendVoiceQuery(finalMsg, lang);
   };
 
   /**
-   * Composer mic → Agora voice session control (no more STT dictation here):
-   * - idle → start the call (same as tapping the orb)
-   * - connecting → busy, no-op (avoids muted-flag/engine desync mid-handshake)
-   * - connected → toggle the caller's mic mute
+   * Composer mic button:
+   * - During active voice call (isActive): toggles caller mute/unmute
+   * - In chat mode:
+   *   - If dictating: stops dictation and commits the voice turn immediately
+   *   - If idle: unlocks web audio, immediately requests mic permission with 0ms delay,
+   *     and streams live speech into the input box, auto-committing on silence
    */
   const handleMicButton = () => {
     if (typingRef.current) {
       clearInterval(typingRef.current);
       typingRef.current = null;
     }
-    if (state === 'idle') {
-      toggleSession(lang);
+    if (isSpeaking) stopSpeaking();
+
+    // If an orb voice call is live, mic button acts as mute/unmute
+    if (isActive) {
+      toggleMute();
       return;
     }
-    if (state === 'connecting') return;
-    toggleMute();
+
+    // Composer dictation mode
+    if (isDictating) {
+      dictation.stop();
+      commitVoiceTurn();
+    } else {
+      unlockWebAudio();
+      primeWebAudio();
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          stream.getTracks().forEach((t) => t.stop());
+        }).catch(() => {});
+      }
+      voiceTurnRef.current = true;
+      dictation.setVoiceTurn(true);
+      setInputText('');
+      inputTextRef.current = '';
+      dictation.start();
+    }
   };
 
   const handleSelectAttachment = async (type: 'camera' | 'photos' | 'files') => {
@@ -750,16 +788,18 @@ export default function TalkScreen() {
               returnKeyType="send"
             />
 
-            {/* Inside Right: Agora Voice Session mic — connect when idle, mute/unmute when live */}
+            {/* Inside Right: Voice mic — Dictates when idle, mute/unmute during call */}
             <Pressable
               style={[
                 s.micBtnInside,
-                isActive && !muted && s.micBtnInsideActive,
+                (isDictating || (isActive && !muted)) && s.micBtnInsideActive,
                 muted && s.micBtnInsideMuted,
               ]}
               onPress={handleMicButton}
               accessibilityLabel={
-                state === 'connecting'
+                isDictating
+                  ? (lang === 'hi' ? 'बोलना बंद करें' : 'Stop speaking')
+                  : state === 'connecting'
                   ? t('talk_mic_connecting')
                   : state === 'idle'
                   ? t('talk_mic_start')
@@ -770,7 +810,7 @@ export default function TalkScreen() {
               accessibilityRole="button"
               accessibilityState={{ busy: state === 'connecting' }}
             >
-              {isActive && !muted && (
+              {(isDictating || (isActive && !muted)) && (
                 <Animated.View
                   pointerEvents="none"
                   style={[
@@ -790,7 +830,9 @@ export default function TalkScreen() {
                 set="feather"
                 size={19}
                 color={
-                  state === 'idle'
+                  isDictating
+                    ? '#10B981'
+                    : state === 'idle'
                     ? colors.text
                     : muted
                     ? colors.danger

@@ -22,7 +22,7 @@ import { colors, space, radius } from '../theme';
 import { useApp } from '../context/AppContext';
 import { logMedication, addMedication, scanPrescription } from '../services/api';
 import { ReceiptCard } from '../components/reacticx';
-import { speakNatural, stopNaturalVoice } from '../services/tts';
+import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio } from '../services/tts';
 import { useDictation } from '../services/stt';
 
 interface ScannedMedicine {
@@ -100,6 +100,13 @@ export default function PrescriptionScannerScreen() {
   const handleStartVoice = () => {
     setVoiceInputText('');
     setShowVoiceModal(true);
+    unlockWebAudio();
+    primeWebAudio();
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        stream.getTracks().forEach((t) => t.stop());
+      }).catch(() => {});
+    }
     try {
       dictation.start();
     } catch {}

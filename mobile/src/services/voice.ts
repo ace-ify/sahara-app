@@ -8,7 +8,7 @@ import {
   clearLatestCard,
   sendChatMessage,
 } from './api';
-import { speakNatural, stopNaturalVoice } from './tts';
+import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio } from './tts';
 import { ConvState } from '../components/StateBadge';
 import { Language } from '../context/AppContext';
 import {
@@ -86,6 +86,10 @@ export function useAgoraVoice() {
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
   const [sessionMode, setSessionMode] = useState<VoiceSessionMode | null>(null);
+  const sessionModeRef = useRef<VoiceSessionMode | null>(null);
+  useEffect(() => {
+    sessionModeRef.current = sessionMode;
+  }, [sessionMode]);
   // Mirrors the local mic's published state on the RTC channel. Toggled by
   // the composer mic button while a session is live.
   const [muted, setMuted] = useState(false);
@@ -280,6 +284,15 @@ export function useAgoraVoice() {
 
   const startSession = async (lang: Language = 'hi') => {
     stopSpeaking();
+    if (Platform.OS === 'web') {
+      primeWebAudio();
+      unlockWebAudio();
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          stream.getTracks().forEach((t) => t.stop());
+        }).catch(() => {});
+      }
+    }
     setState('connecting');
     // A fresh call always starts with a hot mic.
     setMuted(false);
@@ -287,6 +300,23 @@ export function useAgoraVoice() {
     try {
       // 0. Stable channel → server-side memory keys survive across calls
       const stableChannel = await getStableVoiceChannel();
+      setChannelName(stableChannel);
+
+      // Web experience: Instant Murf Voice Call Loop with hands-free STT + Murf TTS + Companion Cards
+      if (Platform.OS === 'web') {
+        setSessionMode('loop');
+        const greeting =
+          lang === 'hi'
+            ? 'नमस्ते! मैं सहारा हूँ। बताइए, आज आप कैसा महसूस कर रहे हैं?'
+            : 'Hello! I am Sahara. How can I help you today?';
+        appendTranscript('agent', greeting);
+        setState('speaking');
+        speakNatural(greeting, lang, {
+          onDone: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+          onError: () => setState((curr) => (curr === 'speaking' ? 'listening' : curr)),
+        });
+        return;
+      }
 
       // 1. Fetch Agora tokens & channel configuration from backend
       const config = await getConfig({ channel: stableChannel });
@@ -305,7 +335,7 @@ export function useAgoraVoice() {
       }
 
       // 3. Connect via react-native-agora on Native if the native engine is linked
-      const agoraNative = Platform.OS !== 'web' ? loadAgoraNative() : null;
+      const agoraNative = loadAgoraNative();
       if (agoraNative) {
         try {
           const { createAgoraRtcEngine, ChannelProfileType, ClientRoleType } = agoraNative;
@@ -371,64 +401,6 @@ export function useAgoraVoice() {
         }
       }
 
-      // 4. Connect Web Client to Agora RTC Channel (true browser duplex)
-      if (Platform.OS === 'web' && AgoraRTC) {
-        try {
-          const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-          agoraClientRef.current = client;
-
-          client.on('user-published', async (user: any, mediaType: string) => {
-            if (mediaType === 'audio') {
-              const remoteAudioTrack = await client.subscribe(user, mediaType);
-              remoteAudioTrackRef.current = remoteAudioTrack;
-              remoteAudioTrack.play();
-              setSessionMode('rtc');
-              setState('speaking');
-            }
-          });
-
-          client.on('user-unpublished', (user: any, mediaType: string) => {
-            if (mediaType === 'audio') {
-              setState((curr) => (curr === 'speaking' ? 'listening' : curr));
-            }
-          });
-
-          client.on('stream-message', (uid: any, payload: Uint8Array) => {
-            try {
-              const data = JSON.parse(new TextDecoder('utf-8').decode(payload));
-              const content = data.text || data.content || data.message || '';
-              if (content && typeof content === 'string') {
-                const role: 'user' | 'agent' =
-                  data.role === 'user' || String(uid) !== String(agentRtcUid) ? 'user' : 'agent';
-                handleTranscript(role, content);
-              }
-            } catch {}
-          });
-
-          await client.join(config.app_id, ch, config.token, userUid);
-
-          // Mic is optional: a denied/unavailable microphone must NOT kill the
-          // session — agent audio and datastream transcripts keep flowing, and
-          // the caller can still interact by text.
-          try {
-            const micTrack = await AgoraRTC.createMicrophoneAudioTrack({
-              encoderConfig: 'speech_standard',
-            });
-            localMicTrackRef.current = micTrack;
-            await client.publish([micTrack]);
-          } catch (micErr) {
-            console.warn('Microphone unavailable — staying in RTC listen/text mode:', micErr);
-          }
-
-          setSessionMode('rtc');
-          startVolumeMonitoring();
-          setState('listening');
-          return;
-        } catch (rtcErr) {
-          console.warn('Agora WebRTC client connection note:', rtcErr);
-          teardownRtc();
-        }
-      }
 
       // 5. Voice-loop fallback — no RTC engine available (Expo Go / dev-build
       //    pending / agent start failed). Still a real STT → LLM → TTS
@@ -543,16 +515,13 @@ export function useAgoraVoice() {
     const trimmed = queryText.trim();
     if (!trimmed) return;
 
-    // Start a voice-loop session implicitly when the user speaks/types first.
+    // Ensure stable channel for memory keys across calls
     let ch = channelName;
-    if (stateRef.current === 'idle') {
-      setState('connecting');
-      const stableChannel = await getStableVoiceChannel();
+    if (!ch) {
       try {
-        const config = await getConfig({ channel: stableChannel });
-        ch = config.channel_name;
+        const stableChannel = await getStableVoiceChannel();
+        ch = stableChannel;
         setChannelName(ch);
-        setSessionMode('loop');
       } catch {}
     }
 
@@ -602,14 +571,14 @@ export function useAgoraVoice() {
       speakText(reply, lang, agentMsgId, () => {
         setState((curr) => {
           if (curr !== 'speaking') return curr;
-          return ch ? 'listening' : 'idle';
+          return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
         });
       });
       setState('speaking');
     } catch (err) {
       console.warn('sendVoiceQuery error:', err);
       if (stateRef.current === 'thinking' || stateRef.current === 'speaking') {
-        setState(ch ? 'listening' : 'idle');
+        setState(sessionModeRef.current === 'loop' ? 'listening' : 'idle');
       }
     }
   };
