@@ -15,6 +15,7 @@ export function Button({
   onPress,
   variant = 'primary',
   big,
+  disabled,
   style,
   accessibilityLabel,
 }: {
@@ -26,13 +27,15 @@ export function Button({
   onPress?: () => void;
   variant?: Variant;
   big?: boolean;
+  disabled?: boolean;
   style?: ViewStyle;
   accessibilityLabel?: string;
 }) {
   const v = VARIANTS[variant];
   return (
     <Pressable
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel || `${label}${sub ? ', ' + sub : ''}`}
       style={({ pressed }) => [
@@ -41,10 +44,10 @@ export function Button({
           backgroundColor: v.bg,
           borderColor: v.border,
           minHeight: big ? 62 : touch.primary,
-          transform: [{ scale: pressed ? 0.985 : 1 }],
+          transform: [{ scale: pressed && !disabled ? 0.985 : 1 }],
+          opacity: disabled ? 0.5 : pressed ? 0.88 : 1,
         },
-        variant === 'primary' && s.primaryGlow,
-        pressed && { opacity: 0.88 },
+        variant === 'primary' && !disabled && s.primaryGlow,
         style,
       ]}
     >

@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Pressable, StyleSheet, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Pressable, StyleSheet, Alert, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AppText } from '../components/AppText';
@@ -32,33 +32,61 @@ export default function ProfileScreen() {
   } = useApp();
 
   const sizes = [t('size_normal'), t('size_large'), t('size_xl')];
+  const [resetting, setResetting] = useState(false);
+
+  const executeReset = async () => {
+    setResetting(true);
+    try {
+      try {
+        await resetAllData();
+      } catch (err) {
+        console.warn('Backend resetAllData failed:', err);
+      }
+      await resetUserProfile();
+      await clearAll();
+
+      if (Platform.OS === 'web') {
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage?.clear();
+            window.sessionStorage?.clear();
+            window.location.href = '/';
+            return;
+          }
+        } catch {}
+      }
+      nav.reset({ index: 0, routes: [{ name: 'Onboarding' }] });
+    } catch (e) {
+      console.warn('Reset error:', e);
+      nav.reset({ index: 0, routes: [{ name: 'Onboarding' }] });
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const handleConfirmReset = () => {
+    const confirmMsg =
+      lang === 'hi'
+        ? 'क्या आप वाकई सहारा का सारा डेटा, चैट हिस्ट्री और प्रोफाइल मिटाना चाहते हैं? ऐप बिल्कुल शुरू से शुरू होगी।'
+        : 'Are you sure you want to wipe all memory, transcripts, medications, and profile? The app will return to a clean slate.';
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(confirmMsg)) {
+        void executeReset();
+      }
+      return;
+    }
+
     Alert.alert(
       lang === 'hi' ? 'ऐप रीसेट करें?' : 'Reset All Data?',
-      lang === 'hi'
-        ? 'क्या आप वाकई सहारा की सारी मेमोरी, चैट हिस्ट्री, दवाएं और वाइटल्स मिटाना चाहते हैं? नया यूजर शुरू से शुरू कर सकेगा।'
-        : 'Are you sure you want to wipe all memory, transcripts, medications, and vitals? The app will return to a clean slate.',
+      confirmMsg,
       [
         { text: lang === 'hi' ? 'रद्द करें' : 'Cancel', style: 'cancel' },
         {
           text: lang === 'hi' ? 'हाँ, सब साफ़ करें' : 'Yes, Wipe All',
           style: 'destructive',
-          onPress: async () => {
-            // Clear local profile state instantly, then storage + backend.
-            resetUserProfile();
-            try {
-              await resetAllData();
-              await clearAll();
-              Alert.alert(
-                lang === 'hi' ? 'रीसेट पूरा हुआ' : 'Reset Complete',
-                lang === 'hi' ? 'ऐप का सारा डेटा साफ़ कर दिया गया है।' : 'All data has been cleared.',
-                [{ text: 'OK', onPress: () => nav.reset({ index: 0, routes: [{ name: 'Onboarding' }] }) }],
-              );
-            } catch {
-              await clearAll();
-              nav.reset({ index: 0, routes: [{ name: 'Onboarding' }] });
-            }
+          onPress: () => {
+            void executeReset();
           },
         },
       ],
@@ -349,8 +377,13 @@ export default function ProfileScreen() {
             </View>
           </View>
           <Button
-            label={lang === 'hi' ? '⚠️ सारा डेटा साफ़ करें (Reset App)' : '⚠️ Wipe Everything & Reset App'}
+            label={
+              resetting
+                ? (lang === 'hi' ? 'डेटा साफ़ हो रहा है...' : 'Resetting...')
+                : (lang === 'hi' ? '⚠️ सारा डेटा साफ़ करें (Reset App)' : '⚠️ Wipe Everything & Reset App')
+            }
             variant="danger"
+            disabled={resetting}
             onPress={handleConfirmReset}
             style={{ marginTop: space.xs }}
           />

@@ -43,7 +43,7 @@ interface AppContextType {
   caregiverPhone: string;
   setCaregiverPhone: (phone: string) => void;
   /** Clears the saved name + caregiver contact from state and storage. */
-  resetUserProfile: () => void;
+  resetUserProfile: () => Promise<void>;
   t: (key: string) => string;
   /** Same as t(), but replaces {tokens} with values, e.g. tf('meds_progress', { taken: 1, total: 3 }) */
   tf: (key: string, vars: Record<string, string | number>) => string;
@@ -747,12 +747,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     else removeItem(CAREGIVER_PHONE_KEY);
   }, []);
 
-  // "Forget my data" must also drop the personal profile, not just consents.
-  const resetUserProfile = useCallback(() => {
+  // "Forget my data" drops profile, consents, language choice, and all storage keys.
+  const resetUserProfile = useCallback(async () => {
     setUserNameState('');
     setCaregiverPhoneState('');
-    removeItem(USER_NAME_KEY);
-    removeItem(CAREGIVER_PHONE_KEY);
+    setConsentCaregiverSyncState(true);
+    setConsentEmergencyBreakGlassState(true);
+    setConsentDoctorShareState(false);
+    setLanguageChosen(false);
+    await Promise.all([
+      removeItem(USER_NAME_KEY),
+      removeItem(CAREGIVER_PHONE_KEY),
+      removeItem(LANG_CHOSEN_KEY),
+      removeItem(CONSENT_CAREGIVER_KEY),
+      removeItem(CONSENT_EMERGENCY_KEY),
+      removeItem(CONSENT_DOCTOR_KEY),
+      removeItem(LANG_KEY),
+    ]);
   }, []);
 
   const fontScale = FONT_SCALES[textSize] || 1.0;
