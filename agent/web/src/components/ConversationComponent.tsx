@@ -33,7 +33,12 @@ import {
 	TranscriptHelperMode,
 	type UserTranscription,
 } from "agora-agent-client-toolkit";
-import { AgentVisualizer } from "agora-agent-uikit";
+import OrbBloop from "@/components/ui/orb-bloop";
+import { BloopState } from "@/components/orb/bloop/types";
+import {
+	BLOOP_PALETTES,
+	BloopPaletteName,
+} from "@/components/orb/bloop/palettes";
 import { MicButtonWithVisualizer } from "agora-agent-uikit/rtc";
 import {
 	RemoteUser,
@@ -384,6 +389,13 @@ export default function ConversationComponent({
 		[agentState, isAgentConnected, connectionState],
 	);
 
+	const bloopState = useMemo(() => {
+		if (visualizerState === "talking") return BloopState.speak;
+		if (visualizerState === "ambient") return BloopState.listen;
+		if (visualizerState === "analyzing") return BloopState.think;
+		return BloopState.idle;
+	}, [visualizerState]);
+
 	const handleMicToggle = useCallback(async () => {
 		const next = !isEnabled;
 		const track = localMicrophoneTrack;
@@ -458,7 +470,16 @@ export default function ConversationComponent({
 					className="relative flex h-full min-h-[20rem] w-full max-w-4xl items-center justify-center"
 					aria-label="AI agent status visualization"
 				>
-					<AgentVisualizer state={visualizerState} size="lg" />
+					<OrbBloop
+						size={280}
+						state={bloopState}
+						audioMode="ambient"
+						bloopColorMain={BLOOP_PALETTES[BloopPaletteName.blue].main}
+						bloopColorLow={BLOOP_PALETTES[BloopPaletteName.blue].low}
+						bloopColorMid={BLOOP_PALETTES[BloopPaletteName.blue].mid}
+						bloopColorHigh={BLOOP_PALETTES[BloopPaletteName.blue].high}
+						watercolorStrength={0.65}
+					/>
 					{remoteUsers.map((user) => (
 						<div key={user.uid} className="hidden">
 							<RemoteUser user={user} />

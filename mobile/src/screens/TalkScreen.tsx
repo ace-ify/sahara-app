@@ -44,7 +44,7 @@ import { colors, radius, sans } from '../theme';
 export default function TalkScreen() {
   const nav = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const { lang, tf, t } = useApp();
+  const { lang, tf, t, userName } = useApp();
   const { width } = useWindowDimensions();
 
   const {
@@ -56,7 +56,9 @@ export default function TalkScreen() {
     audioLevel,
     currentlySpeakingId,
     sessionMode,
+    muted,
     toggleSession,
+    toggleMute,
     sendVoiceQuery,
     speakText,
     stopSpeaking,
@@ -192,8 +194,9 @@ export default function TalkScreen() {
 
   // Auto-listen in voice-loop mode: whenever Sahara finishes speaking, start
   // capturing the caller's next turn automatically (hands-free duplex-lite).
+  // The composer-mic mute acts as the kill-switch: muted → no auto-capture.
   useEffect(() => {
-    if (!isVoiceLoop || state !== 'listening') return;
+    if (!isVoiceLoop || state !== 'listening' || muted) return;
     if (dictation.phase !== 'idle') return;
     const id = setTimeout(() => {
       if (typingRef.current) {
@@ -207,11 +210,11 @@ export default function TalkScreen() {
     }, 500);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVoiceLoop, state, dictation.phase]);
+  }, [isVoiceLoop, state, muted, dictation.phase]);
 
-  // Call ended → cancel any active voice-turn capture.
+  // Mic muted (or call ended) → cancel any active voice-turn capture.
   useEffect(() => {
-    if (state === 'idle' && dictation.phase !== 'idle') {
+    if ((muted || state === 'idle') && dictation.phase !== 'idle') {
       voiceTurnRef.current = false;
       voiceTurnLiveRef.current = false;
       dictation.setVoiceTurn(false);
@@ -222,7 +225,7 @@ export default function TalkScreen() {
       dictation.cancel();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, dictation.phase]);
+  }, [muted, state, dictation.phase]);
 
   // Surface dictation errors as a transient notice in the composer.
   useEffect(() => {
@@ -232,9 +235,10 @@ export default function TalkScreen() {
     dictNoticeTimer.current = setTimeout(() => setDictNotice(null), 4000);
   }, [dictation.error]);
 
-  // Gentle pulse on the mic while it is listening.
+  // Gentle pulse on the composer mic while the Agora session is live and unmuted.
   useEffect(() => {
-    if (dictation.phase !== 'recording') {
+    const micLive = (state !== 'idle') && !muted;
+    if (!micLive) {
       dictationPulse.setValue(1);
       return;
     }
@@ -246,7 +250,8 @@ export default function TalkScreen() {
     );
     loop.start();
     return () => loop.stop();
-  }, [dictation.phase, dictationPulse]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, muted, dictationPulse]);
 
   const handleSOS = () => {
     const ch = channelName || `emergency-${Date.now()}`;
@@ -267,19 +272,23 @@ export default function TalkScreen() {
     sendVoiceQuery(finalMsg, lang);
   };
 
-  const handleToggleDictation = () => {
+  /**
+   * Composer mic → Agora voice session control (no more STT dictation here):
+   * - idle → start the call (same as tapping the orb)
+   * - connecting → busy, no-op (avoids muted-flag/engine desync mid-handshake)
+   * - connected → toggle the caller's mic mute
+   */
+  const handleMicButton = () => {
     if (typingRef.current) {
       clearInterval(typingRef.current);
       typingRef.current = null;
     }
-    if (dictation.phase === 'recording') {
-      dictation.stop();
-    } else if (dictation.phase === 'idle') {
-      voiceTurnRef.current = false;
-      dictation.setVoiceTurn(false);
-      setInputText('');
-      dictation.start();
+    if (state === 'idle') {
+      toggleSession(lang);
+      return;
     }
+    if (state === 'connecting') return;
+    toggleMute();
   };
 
   const handleSelectAttachment = async (type: 'camera' | 'photos' | 'files') => {
@@ -608,6 +617,10 @@ export default function TalkScreen() {
                   ? lang === 'hi'
                     ? 'सोच रहा हूँ...'
                     : 'Thinking...'
+                  : muted
+                  ? lang === 'hi'
+                    ? 'माइक बंद है · चालू करने के लिए माइक दबाएँ'
+                    : 'Mic is off · tap the mic to unmute'
                   : isActive
                   ? isVoiceLoop
                     ? lang === 'hi'
@@ -615,8 +628,8 @@ export default function TalkScreen() {
                       : 'Listening… speak now'
                     : Platform.OS !== 'web'
                     ? lang === 'hi'
-                      ? 'तैयार है · नीचे माइक दबाकर बोलिए'
-                      : 'Ready · tap the mic below to speak'
+                      ? 'कॉल चालू है · बोलिए'
+                      : 'Call is live · speak now'
                     : lang === 'hi'
                     ? 'आपकी बात सुनी जा रही है...'
                     : 'Listening to you...'
@@ -635,7 +648,9 @@ export default function TalkScreen() {
                 color={colors.text}
                 style={{ marginBottom: 12, fontFamily: sans.bold, fontSize: 24 }}
               >
-                {tf('chat_home_welcome', { name: 'Naimish' })}
+                {userName
+                  ? tf('chat_home_welcome', { name: userName })
+                  : t('chat_home_welcome_noname')}
               </AppText>
               <View style={{ gap: 8 }}>
                 {suggestions.map((row) => (
@@ -728,31 +743,34 @@ export default function TalkScreen() {
             <TextInput
               value={inputText}
               onChangeText={setInputText}
-              placeholder={
-                dictation.phase === 'recording'
-                  ? lang === 'hi'
-                    ? 'बोलिए, मैं सुन रहा हूँ…'
-                    : 'Listening… speak now'
-                  : dictation.phase === 'transcribing'
-                  ? lang === 'hi'
-                    ? 'आपकी बात समझ रहा हूँ…'
-                    : 'Understanding what you said…'
-                  : dictNotice || t('talk_input_placeholder')
-              }
-              placeholderTextColor={dictNotice ? colors.danger : isDictating ? '#34D399' : colors.textMuted}
+              placeholder={dictNotice || t('talk_input_placeholder')}
+              placeholderTextColor={dictNotice ? colors.danger : colors.textMuted}
               style={[s.input, isDictating && !dictNotice && { color: '#34D399' }]}
               onSubmitEditing={() => handleSendText()}
               returnKeyType="send"
             />
 
-            {/* Inside Right: Real Speech-to-Text Dictation Mic */}
+            {/* Inside Right: Agora Voice Session mic — connect when idle, mute/unmute when live */}
             <Pressable
-              style={[s.micBtnInside, isDictating && s.micBtnInsideActive]}
-              onPress={handleToggleDictation}
-              accessibilityLabel="Speech to text dictation"
+              style={[
+                s.micBtnInside,
+                isActive && !muted && s.micBtnInsideActive,
+                muted && s.micBtnInsideMuted,
+              ]}
+              onPress={handleMicButton}
+              accessibilityLabel={
+                state === 'connecting'
+                  ? t('talk_mic_connecting')
+                  : state === 'idle'
+                  ? t('talk_mic_start')
+                  : muted
+                  ? t('talk_mic_unmute')
+                  : t('talk_mic_muted')
+              }
               accessibilityRole="button"
+              accessibilityState={{ busy: state === 'connecting' }}
             >
-              {dictation.phase === 'recording' && (
+              {isActive && !muted && (
                 <Animated.View
                   pointerEvents="none"
                   style={[
@@ -768,10 +786,16 @@ export default function TalkScreen() {
                 />
               )}
               <Icon
-                name="mic"
+                name={muted ? 'mic-off' : 'mic'}
                 set="feather"
                 size={19}
-                color={isDictating ? '#10B981' : colors.text}
+                color={
+                  state === 'idle'
+                    ? colors.text
+                    : muted
+                    ? colors.danger
+                    : '#10B981'
+                }
               />
             </Pressable>
           </View>
@@ -1033,6 +1057,9 @@ const s = StyleSheet.create({
   },
   micBtnInsideActive: {
     backgroundColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  micBtnInsideMuted: {
+    backgroundColor: 'rgba(239, 68, 68, 0.16)',
   },
   micPulseRing: {
     position: 'absolute',

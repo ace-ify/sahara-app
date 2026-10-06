@@ -6,7 +6,7 @@ import React, {
   useCallback,
   ReactNode,
 } from 'react';
-import { getItem, setItem } from '../services/storage';
+import { getItem, setItem, removeItem } from '../services/storage';
 
 export type Language = 'hi' | 'en';
 export type TextSizeLevel = 0 | 1 | 2; // 0: Normal, 1: Large (A+), 2: Largest (A++)
@@ -16,6 +16,8 @@ const LANG_CHOSEN_KEY = 'sahara.langChosen';
 const CONSENT_CAREGIVER_KEY = 'sahara.consentCaregiver';
 const CONSENT_EMERGENCY_KEY = 'sahara.consentEmergency';
 const CONSENT_DOCTOR_KEY = 'sahara.consentDoctor';
+const USER_NAME_KEY = 'sahara.userName';
+const CAREGIVER_PHONE_KEY = 'sahara.caregiverPhone';
 
 interface AppContextType {
   lang: Language;
@@ -34,6 +36,14 @@ interface AppContextType {
   setConsentEmergencyBreakGlass: (val: boolean) => void;
   consentDoctorShare: boolean;
   setConsentDoctorShare: (val: boolean) => void;
+  /** User's saved name (from onboarding) — powers the personalised greeting. */
+  userName: string;
+  setUserName: (name: string) => void;
+  /** Family caregiver's WhatsApp number (from onboarding) — used for SOS alerts. */
+  caregiverPhone: string;
+  setCaregiverPhone: (phone: string) => void;
+  /** Clears the saved name + caregiver contact from state and storage. */
+  resetUserProfile: () => void;
   t: (key: string) => string;
   /** Same as t(), but replaces {tokens} with values, e.g. tf('meds_progress', { taken: 1, total: 3 }) */
   tf: (key: string, vars: Record<string, string | number>) => string;
@@ -59,6 +69,30 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     onb_perm_notif_sub: 'दवा व जाँच की याद के लिए',
     onb_start: 'शुरू करें',
     onb_helpline: 'मुफ़्त हेल्पलाइन · 1800-SAHARA',
+    onb_s1_title: 'नमस्ते! मैं सहारा हूँ 🙏',
+    onb_s1_body: 'बुज़ुर्गों और परिवारों के लिए आसान आवाज़ साथी — बस बोलकर बात करें, बिना टाइपिंग के।',
+    onb_s1_voice_now: '🔊 सहारा बोल रहा है...',
+    onb_s2_title: 'सहारा आपके लिए क्या करता है',
+    onb_s2_body: 'दो वादे, सरल शब्दों में — ताकि आप बिना झंझट, स्वस्थ रहें।',
+    onb_s2_p1_title: 'रोज़ की सेहत का साथ',
+    onb_s2_p1_body: 'बीपी, शुगर और दवा की याद — सब बोलकर। हर दिन नियमित रखें, बिना कुछ भूले।',
+    onb_s2_p2_title: '24 घंटे आपात सेवा',
+    onb_s2_p2_body: 'गिरने या तबियत बिगड़ने पर 108 एम्बुलेंस और परिवार दोनों को तुरंत खबर।',
+    onb_s3_title: 'आइए, आपकी जानकारी से शुरू करें',
+    onb_s3_body: 'नीचे की जानकारी आपके फ़ोन में ही सुरक्षित रहती है। यह सिर्फ मदद पहुँचाने के लिए है।',
+    onb_s3_name_label: 'आपका नाम (वैकल्पिक)',
+    onb_s3_name_hint: 'जैसे: रामप्रसाद',
+    onb_s3_caregiver_label: 'परिवार के सदस्य का WhatsApp नंबर',
+    onb_s3_caregiver_hint: 'बेटे/बेटी का नंबर · जैसे: 9876543210',
+    onb_s3_caregiver_sub: 'आपातकाल में SOS अलर्ट इसी नंबर पर भेजा जाएगा। इसे बाद में भी जोड़ सकते हैं।',
+    onb_s3_perm_title: 'आवाज़ व लोकेशन की अनुमति दें',
+    onb_s3_perm_sub: 'माइक्रोफ़ोन से बोलकर बात करने और आपात में एम्बुलेंस को घर तक पहुँचाने के लिए।',
+    onb_s3_perm_granted: '✓ अनुमति मिल गई',
+    onb_s3_perm_retry: 'Settings में जाकर अनुमति दें →',
+    onb_s3_enable: 'अनुमतियाँ दें और शुरू करें',
+    onb_s3_finish: 'शुरू करें →',
+    onb_back: '← पीछे',
+    onb_skip: 'छोड़ें',
 
     // ---- Talk ----
     frame_title: 'सहारा · लाइव प्रीव्यू',
@@ -68,6 +102,10 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     talk_state_listening: 'सहारा सुन रहा है… (बोलें)',
     talk_state_thinking: 'सहारा सोच रहा है…',
     talk_state_speaking: 'सहारा बोल रहा है… (टोकने के लिए टैप करें)',
+    talk_mic_start: 'बोलना शुरू करें',
+    talk_mic_muted: 'माइक बंद करें',
+    talk_mic_unmute: 'माइक चालू करें',
+    talk_mic_connecting: 'जुड़ रहा है…',
     talk_hint_idle: 'आपका स्वास्थ्य साथी · हमेशा आपके साथ',
     talk_hint_active: 'आवाज़ से या नीचे लिखकर कभी भी पूछें',
     talk_quick_title: 'त्वरित सुझाव',
@@ -77,7 +115,8 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     talk_good: 'अच्छा जवाब',
     talk_bad: 'सुधार चाहिए',
     talk_new_chat: 'नई बातचीत',
-    chat_home_welcome: 'नमस्ते {name}! 🙏',
+    chat_home_welcome: 'नमस्ते {name} जी! 🙏',
+    chat_home_welcome_noname: 'नमस्ते! मैं सहारा हूँ, आज आपकी सेहत कैसी है? 🙏',
     chat_sugg_1: '📄 मेरी आज की दवाएँ',
     chat_sugg_2: '📍 नज़दीकी अस्पताल',
     chat_sugg_3: '💊 जन औषधि की बचत',
@@ -344,6 +383,30 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     onb_perm_notif_sub: 'For medicine and check-in reminders',
     onb_start: 'Start',
     onb_helpline: 'Toll-free helpline · 1800-SAHARA',
+    onb_s1_title: 'Hello! I am Sahara 🙏',
+    onb_s1_body: 'A friendly voice companion for seniors — just speak naturally, no typing needed.',
+    onb_s1_voice_now: '🔊 Sahara is speaking...',
+    onb_s2_title: 'What Sahara does for you',
+    onb_s2_body: 'Two simple promises, in plain words — so you stay healthy without the fuss.',
+    onb_s2_p1_title: 'Daily health companion',
+    onb_s2_p1_body: 'BP, sugar and medicine reminders — all by voice. Keep steady every day, never forget a dose.',
+    onb_s2_p2_title: '24/7 emergency lifeline',
+    onb_s2_p2_body: 'If you fall or feel unwell, 108 ambulance and your family are alerted instantly.',
+    onb_s3_title: "Let's set you up",
+    onb_s3_body: 'Everything below stays safe on your phone. It is only used to get you help.',
+    onb_s3_name_label: 'Your Name (Optional)',
+    onb_s3_name_hint: 'e.g. Ramprasad',
+    onb_s3_caregiver_label: "Son/Daughter's WhatsApp Number",
+    onb_s3_caregiver_hint: "Family member's number · e.g. 9876543210",
+    onb_s3_caregiver_sub: 'Emergency SOS alerts will go to this number. You can also add it later.',
+    onb_s3_perm_title: 'Allow Voice & Location Access',
+    onb_s3_perm_sub: 'So you can talk to Sahara by voice and the ambulance can find you in an emergency.',
+    onb_s3_perm_granted: '✓ Permissions granted',
+    onb_s3_perm_retry: 'Open Settings to allow →',
+    onb_s3_enable: 'Enable & Get Started',
+    onb_s3_finish: 'Get Started →',
+    onb_back: '← Back',
+    onb_skip: 'Skip',
 
     // ---- Talk ----
     frame_title: 'Sahara · Live preview',
@@ -353,6 +416,10 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     talk_state_listening: 'Sahara is listening… (speak now)',
     talk_state_thinking: 'Sahara is thinking…',
     talk_state_speaking: 'Sahara is speaking… (tap to interrupt)',
+    talk_mic_start: 'Start talking',
+    talk_mic_muted: 'Mute mic',
+    talk_mic_unmute: 'Unmute mic',
+    talk_mic_connecting: 'Connecting…',
     talk_hint_idle: 'Your health companion · always here for you',
     talk_hint_active: 'Ask by voice or type below, any time',
     talk_quick_title: 'Quick prompts',
@@ -362,7 +429,8 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
     talk_good: 'Good response',
     talk_bad: 'Needs work',
     talk_new_chat: 'New chat',
-    chat_home_welcome: '{name}! Welcome back.',
+    chat_home_welcome: 'Welcome back, {name}!',
+    chat_home_welcome_noname: 'Welcome to Sahara! How are you feeling today?',
     chat_sugg_1: '📄 Show my medicines',
     chat_sugg_2: '📍 Nearby hospital',
     chat_sugg_3: '💊 Generic savings',
@@ -625,17 +693,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [consentCaregiverSync, setConsentCaregiverSyncState] = useState(true);
   const [consentEmergencyBreakGlass, setConsentEmergencyBreakGlassState] = useState(true);
   const [consentDoctorShare, setConsentDoctorShareState] = useState(false);
+  const [userName, setUserNameState] = useState('');
+  const [caregiverPhone, setCaregiverPhoneState] = useState('');
 
   // Restore the saved preferences once on mount, so settings survive reloads.
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [savedLang, savedChosen, savedCaregiver, savedEmergency, savedDoctor] = await Promise.all([
+      const [
+        savedLang,
+        savedChosen,
+        savedCaregiver,
+        savedEmergency,
+        savedDoctor,
+        savedUserName,
+        savedCaregiverPhone,
+      ] = await Promise.all([
         getItem(LANG_KEY),
         getItem(LANG_CHOSEN_KEY),
         getItem(CONSENT_CAREGIVER_KEY),
         getItem(CONSENT_EMERGENCY_KEY),
         getItem(CONSENT_DOCTOR_KEY),
+        getItem(USER_NAME_KEY),
+        getItem(CAREGIVER_PHONE_KEY),
       ]);
       if (!mounted) return;
       if (savedLang === 'hi' || savedLang === 'en') setLangState(savedLang);
@@ -643,6 +723,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (savedCaregiver !== null) setConsentCaregiverSyncState(savedCaregiver === '1');
       if (savedEmergency !== null) setConsentEmergencyBreakGlassState(savedEmergency === '1');
       if (savedDoctor !== null) setConsentDoctorShareState(savedDoctor === '1');
+      if (savedUserName) setUserNameState(savedUserName);
+      if (savedCaregiverPhone) setCaregiverPhoneState(savedCaregiverPhone);
       setReady(true);
     })();
     return () => {
@@ -685,6 +767,28 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setItem(CONSENT_DOCTOR_KEY, val ? '1' : '0');
   }, []);
 
+  const setUserName = useCallback((name: string) => {
+    const trimmed = (name || '').trim();
+    setUserNameState(trimmed);
+    if (trimmed) setItem(USER_NAME_KEY, trimmed);
+    else removeItem(USER_NAME_KEY);
+  }, []);
+
+  const setCaregiverPhone = useCallback((phone: string) => {
+    const trimmed = (phone || '').replace(/[^\d+]/g, '');
+    setCaregiverPhoneState(trimmed);
+    if (trimmed) setItem(CAREGIVER_PHONE_KEY, trimmed);
+    else removeItem(CAREGIVER_PHONE_KEY);
+  }, []);
+
+  // "Forget my data" must also drop the personal profile, not just consents.
+  const resetUserProfile = useCallback(() => {
+    setUserNameState('');
+    setCaregiverPhoneState('');
+    removeItem(USER_NAME_KEY);
+    removeItem(CAREGIVER_PHONE_KEY);
+  }, []);
+
   const fontScale = FONT_SCALES[textSize] || 1.0;
 
   const t = useCallback(
@@ -723,6 +827,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setConsentEmergencyBreakGlass,
         consentDoctorShare,
         setConsentDoctorShare,
+        userName,
+        setUserName,
+        caregiverPhone,
+        setCaregiverPhone,
+        resetUserProfile,
         t,
         tf,
       }}

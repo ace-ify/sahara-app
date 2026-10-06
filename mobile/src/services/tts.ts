@@ -1,7 +1,8 @@
-// Natural voice playback — server-side Murf TTS (same "Anisha" voice as the
-// RTC agent) with an expo-speech fallback when the server is unreachable.
-// This replaces the robotic device TTS ("machinery awaaz") for greetings,
-// replies, and the onboarding voice preview on native.
+// Natural voice playback — server-side Murf TTS from `${API_BASE_URL}/api/tts`,
+// played through expo-audio on native and HTMLAudio on web. expo-speech (the
+// robotic device TTS) remains only as a last-resort fallback when the server
+// is unreachable or the audio genuinely fails to play — every fallback is
+// logged loudly with the exact error so the cause is always visible.
 import * as Speech from 'expo-speech';
 import { Platform } from 'react-native';
 import { API_BASE_URL } from './api';
@@ -12,16 +13,18 @@ type VoiceCallbacks = {
   onError?: () => void;
 };
 
-// Lazily required so web (no expo-audio native module) still works.
-let AudioModule: any = null;
+// Lazily required so web bundles never evaluate the native module.
 let createAudioPlayer: any = null;
+let setAudioModeAsync: any = null;
 if (Platform.OS !== 'web') {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const expoAudio = require('expo-audio');
-    AudioModule = expoAudio.AudioModule;
     createAudioPlayer = expoAudio.createAudioPlayer;
-  } catch {}
+    setAudioModeAsync = expoAudio.setAudioModeAsync;
+  } catch (err) {
+    console.warn('[tts] expo-audio unavailable — device TTS will be used:', err);
+  }
 }
 
 let currentPlayer: any = null;
@@ -38,19 +41,23 @@ function speakWithDeviceTts(text: string, lang: string, cb?: VoiceCallbacks) {
       onStopped: () => cb?.onDone?.(),
     });
     cb?.onStart?.();
-  } catch {
+  } catch (err) {
+    console.warn('[tts] device TTS speak failed:', err);
     cb?.onError?.();
   }
 }
 
 export function stopNaturalVoice() {
   speechGeneration += 1;
-  if (currentPlayer) {
+  const player = currentPlayer;
+  currentPlayer = null;
+  if (player) {
     try {
-      currentPlayer.pause();
-      currentPlayer.release();
+      player.pause?.();
     } catch {}
-    currentPlayer = null;
+    try {
+      player.release?.();
+    } catch {}
   }
   try {
     Speech.stop();
@@ -62,9 +69,170 @@ export function stopNaturalVoice() {
   }
 }
 
+function playWebAudio(
+  audioUrl: string,
+  trimmed: string,
+  lang: string,
+  gen: number,
+  cb?: VoiceCallbacks,
+) {
+  const audio = new window.Audio(audioUrl);
+  currentPlayer = audio;
+  audio.onended = () => {
+    if (gen === speechGeneration) cb?.onDone?.();
+  };
+  audio.onerror = () => {
+    console.warn('[tts] web audio element error for', audioUrl);
+    if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+  };
+  cb?.onStart?.();
+  try {
+    audio.play().catch((err: unknown) => {
+      console.warn('[tts] web audio play() rejected:', err);
+      if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+    });
+  } catch (err) {
+    console.warn('[tts] web audio play() threw:', err);
+    if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+  }
+}
+
+async function playNativeAudio(
+  audioUrl: string,
+  audioLengthSec: number,
+  trimmed: string,
+  lang: string,
+  gen: number,
+  cb?: VoiceCallbacks,
+) {
+  if (!createAudioPlayer) {
+    console.warn('[tts] expo-audio createAudioPlayer unavailable — device TTS fallback');
+    speakWithDeviceTts(trimmed, lang, cb);
+    return;
+  }
+
+  // Proper playback mode: audible while the device is silenced, ducks other
+  // apps, no background session, and STT recording turned off so the speaker
+  // is exclusive. Playback proceeds even if the mode call fails.
+  if (setAudioModeAsync) {
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      allowsRecording: false,
+      interruptionMode: 'duckOthers',
+    }).catch((err: unknown) => {
+      console.warn('[tts] setAudioModeAsync failed (continuing):', err);
+    });
+    if (gen !== speechGeneration) return;
+  }
+
+  // downloadFirst fetches the whole MP3 to tmp before playback — the reliable
+  // way to play short remote clips (no streaming stalls, no half-played audio).
+  let player: any;
+  try {
+    player = createAudioPlayer({ uri: audioUrl }, { downloadFirst: true, updateInterval: 250 });
+  } catch (err) {
+    console.warn('[tts] createAudioPlayer failed for', audioUrl, '— device TTS fallback:', err);
+    speakWithDeviceTts(trimmed, lang, cb);
+    return;
+  }
+  currentPlayer = player;
+
+  let settled = false;
+  let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+  let durationArmed = false;
+  let notPlayingTicks = 0;
+  let subscription: any = null;
+
+  const clearSafety = () => {
+    if (safetyTimer) {
+      clearTimeout(safetyTimer);
+      safetyTimer = null;
+    }
+  };
+  const dispose = () => {
+    clearSafety();
+    try {
+      subscription?.remove?.();
+    } catch {}
+    try {
+      player.release();
+    } catch {}
+    if (currentPlayer === player) currentPlayer = null;
+  };
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    dispose();
+    if (gen === speechGeneration) cb?.onDone?.();
+  };
+  const fail = (reason: unknown) => {
+    if (settled) return;
+    settled = true;
+    dispose();
+    console.warn(
+      '[tts] remote Murf playback failed → device TTS fallback · url:',
+      audioUrl,
+      '· error:',
+      reason,
+    );
+    if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+  };
+
+  try {
+    subscription = player.addListener('playbackStatusUpdate', (status: any) => {
+      if (settled || gen !== speechGeneration) return;
+      if (status?.error) {
+        fail(new Error(`player status error: ${status.error}`));
+        return;
+      }
+      if (status?.didJustFinish) {
+        finish();
+        return;
+      }
+      // Once the real duration is known, re-arm the safety net accurately.
+      if (!durationArmed && status?.isLoaded && (status?.duration || 0) > 0) {
+        durationArmed = true;
+        clearSafety();
+        safetyTimer = setTimeout(finish, status.duration * 1000 + 8000);
+      }
+      // Loaded but idle across two updates — play() may have been requested
+      // before load completed and got lost; nudge playback once (only near
+      // the start of the clip, so a finished clip is never restarted).
+      if (
+        status?.isLoaded &&
+        !status?.playing &&
+        !status?.paused &&
+        (status?.currentTime || 0) < 0.25
+      ) {
+        notPlayingTicks += 1;
+        if (notPlayingTicks === 2) {
+          try {
+            player.play();
+          } catch (err) {
+            fail(err);
+          }
+        }
+      } else {
+        notPlayingTicks = 0;
+      }
+    });
+    cb?.onStart?.();
+    player.play();
+    // Last-resort net: resolves onDone if the didJustFinish event never
+    // arrives. Re-armed with the real duration as soon as it is known.
+    const estimatedSec =
+      audioLengthSec > 0 ? audioLengthSec : Math.max(4, trimmed.length / 13);
+    safetyTimer = setTimeout(finish, Math.min(180000, estimatedSec * 1000 + 8000));
+  } catch (err) {
+    fail(err);
+  }
+}
+
 /**
  * Speak `text` with the natural Murf voice via the backend.
- * Falls back to device TTS when the server call or playback fails.
+ * Falls back to device TTS only when the server call or playback genuinely
+ * fails — each failure is logged with the exact error.
  */
 export async function speakNatural(text: string, lang: string = 'hi', cb?: VoiceCallbacks) {
   const trimmed = (text || '').trim();
@@ -75,8 +243,9 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
 
   stopNaturalVoice();
   const gen = speechGeneration;
-  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
+  let audioUrl: string | null = null;
+  let audioLengthSec = 0;
   try {
     const res = await fetch(`${API_BASE_URL}/api/tts`, {
       method: 'POST',
@@ -84,68 +253,21 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
       body: JSON.stringify({ text: trimmed, lang }),
     });
     if (gen !== speechGeneration) return;
-
-    if (!res.ok) throw new Error(`tts ${res.status}`);
+    if (!res.ok) throw new Error(`tts endpoint responded ${res.status}`);
     const data = await res.json();
-    const audioUrl = data?.audio_url;
-    if (!audioUrl) throw new Error('no audio_url');
-
-    if (Platform.OS === 'web') {
-      const audio = new window.Audio(audioUrl);
-      audio.onplay = () => cb?.onStart?.();
-      audio.onended = () => {
-        if (gen === speechGeneration) cb?.onDone?.();
-      };
-      audio.onerror = () => speakWithDeviceTts(trimmed, lang, cb);
-      currentPlayer = audio;
-      cb?.onStart?.();
-      try {
-        await audio.play();
-      } catch {
-        speakWithDeviceTts(trimmed, lang, cb);
-      }
-      return;
-    }
-
-    if (!createAudioPlayer) throw new Error('expo-audio unavailable');
-
-    try {
-      await AudioModule?.setAudioModeAsync?.({
-        playsInSilentMode: true,
-        allowsRecording: false,
-      });
-    } catch {}
-
-    const player = createAudioPlayer(audioUrl);
-    currentPlayer = player;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      if (gen === speechGeneration) cb?.onDone?.();
-      try {
-        player.release();
-      } catch {}
-      if (currentPlayer === player) currentPlayer = null;
-    };
-    try {
-      player.addListener('playbackStatusUpdate', (status: any) => {
-        if (status?.didJustFinish) finish();
-      });
-    } catch {}
-    cb?.onStart?.();
-    player.play();
-    // Safety net: if the didJustFinish event never arrives, resolve via duration.
-    const estMs = Math.min(120000, Math.max(2000, ((data?.audio_length || 0) as number) * 1000 + 4000));
-    fallbackTimer = setTimeout(finish, estMs);
-    return;
+    audioUrl = data?.audio_url || data?.audioFile || null;
+    audioLengthSec = Number(data?.audio_length) || 0;
+    if (!audioUrl) throw new Error('response contained no audio_url');
   } catch (err) {
-    console.warn('speakNatural fell back to device TTS:', err);
-  } finally {
-    if (fallbackTimer) clearTimeout(fallbackTimer);
+    console.warn('[tts] Murf server request failed → device TTS fallback:', err);
+    if (gen === speechGeneration) speakWithDeviceTts(trimmed, lang, cb);
+    return;
   }
+  if (gen !== speechGeneration) return;
 
-  if (gen === speechGeneration) {
-    speakWithDeviceTts(trimmed, lang, cb);
+  if (Platform.OS === 'web') {
+    playWebAudio(audioUrl, trimmed, lang, gen, cb);
+    return;
   }
+  await playNativeAudio(audioUrl, audioLengthSec, trimmed, lang, gen, cb);
 }

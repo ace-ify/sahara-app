@@ -9,7 +9,7 @@ import {
   TextInput,
   Linking,
 } from 'react-native';
-import type { Permission as AndroidPermission } from 'react-native';
+import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AppText } from '../components/AppText';
@@ -20,19 +20,35 @@ import { colors, space, radius } from '../theme';
 import { useApp, Language } from '../context/AppContext';
 import { speakNatural, stopNaturalVoice } from '../services/tts';
 
+// Step-1 welcome, spoken automatically in natural Murf voice on mount and
+// re-spoken when the language card changes.
+const WELCOME_HI =
+  'नमस्ते! मैं सहारा हूँ — आपकी सेहत और परिवार का साथी। कृपया अपनी पसंदीदा भाषा चुनें।';
+const WELCOME_EN =
+  'Hello! I am Sahara — a companion for your health and family. Please choose your preferred language.';
+
 export default function OnboardingScreen() {
   const nav = useNavigation<any>();
-  const { lang, previewLang, chooseLanguage, languageChosen, t } = useApp();
+  const {
+    lang,
+    previewLang,
+    chooseLanguage,
+    languageChosen,
+    t,
+    userName,
+    setUserName,
+    caregiverPhone,
+    setCaregiverPhone,
+  } = useApp();
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selected, setSelected] = useState<Language>(lang);
   const [isPlayingVoice, setIsPlayingVoice] = useState(false);
-  const [permMic, setPermMic] = useState(false);
-  const [permLoc, setPermLoc] = useState(false);
-  const [permNotif, setPermNotif] = useState(false);
-  // True when Android answered "never ask again" — tapping the card opens app settings.
-  const [permBlocked, setPermBlocked] = useState<{ mic?: boolean; loc?: boolean; notif?: boolean }>({});
-  const [caregiverPhone, setCaregiverPhone] = useState('');
+  const [nameInput, setNameInput] = useState(userName);
+  const [phoneInput, setPhoneInput] = useState(caregiverPhone);
+  // 'idle' → nothing requested yet · 'requesting' → system dialogs up ·
+  // 'granted' → both allowed · 'blocked' → Android said "never ask again".
+  const [permStatus, setPermStatus] = useState<'idle' | 'requesting' | 'granted' | 'blocked'>('idle');
 
   // Breathing Voice AI Orb Animation
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -71,81 +87,82 @@ export default function OnboardingScreen() {
     return () => pulseLoop.stop();
   }, [pulseAnim, glowAnim]);
 
-  const handleSelectLanguage = (l: Language) => {
-    setSelected(l);
-    previewLang(l);
+  const stopGreeting = () => {
+    stopNaturalVoice();
+    setIsPlayingVoice(false);
   };
 
-  const handlePlayVoiceGreeting = async () => {
-    if (isPlayingVoice) {
-      stopNaturalVoice();
-      setIsPlayingVoice(false);
-      return;
-    }
-
-    const text =
-      selected === 'hi'
-        ? 'नमस्ते! मैं सहारा हूँ — आपकी सेहत और परिवार की देखभाल के लिए हमेशा तैयार। आप मुझसे बोलकर बात कर सकते हैं।'
-        : 'Hello! I am Sahara — your voice healthcare companion. You can speak to me naturally anytime.';
-
+  // Auto-play the warm welcome in natural Murf voice when the screen mounts.
+  useEffect(() => {
     setIsPlayingVoice(true);
-    // Natural Murf voice from the backend; device TTS is the automatic fallback.
-    speakNatural(text, selected, {
+    speakNatural(lang === 'hi' ? WELCOME_HI : WELCOME_EN, lang, {
+      onDone: () => setIsPlayingVoice(false),
+      onError: () => setIsPlayingVoice(false),
+    });
+    return stopGreeting;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSelectLanguage = (l: Language) => {
+    if (l === selected) return;
+    setSelected(l);
+    previewLang(l);
+    // Re-greet in the newly selected language so the choice is heard, not just seen.
+    setIsPlayingVoice(true);
+    speakNatural(l === 'hi' ? WELCOME_HI : WELCOME_EN, l, {
       onDone: () => setIsPlayingVoice(false),
       onError: () => setIsPlayingVoice(false),
     });
   };
 
-  // Fire the REAL Android system permission dialog directly (no in-app alert),
-  // matching the native notification-permission behaviour. When Android answers
-  // "never ask again", the card switches to an "open Settings" action.
-  const requestSystemPermission = async (
-    permission: AndroidPermission,
-    key: 'mic' | 'loc' | 'notif',
-    setGranted: (granted: boolean) => void,
-  ) => {
-    if (Platform.OS !== 'android') {
-      // iOS/desktop fallback: keep the original demo-toggle behaviour.
-      setGranted(true);
-      return;
-    }
-    if (permBlocked[key]) {
-      Linking.openSettings().catch(() => {});
-      return;
-    }
+  // Fire the REAL system permission dialogs — mic first, then location.
+  // Both routes are the SDK's own permission prompts (PermissionsAndroid on
+  // Android, the module's request API on iOS; web needs no prompt).
+  // Returns 'granted' | 'denied' | 'blocked' so an ordinary denial can be
+  // retried while a hard "never ask again" routes to system settings.
+  const requestMicPermission = async (): Promise<'granted' | 'denied' | 'blocked'> => {
     try {
-      const res = await PermissionsAndroid.request(permission);
-      if (res === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
-        setPermBlocked((prev) => ({ ...prev, [key]: true }));
-        setGranted(false);
-        return;
+      if (Platform.OS === 'web') return 'granted';
+      if (Platform.OS === 'android') {
+        const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (res === PermissionsAndroid.RESULTS.GRANTED) return 'granted';
+        if (res === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) return 'blocked';
+        return 'denied';
       }
-      setGranted(res === PermissionsAndroid.RESULTS.GRANTED);
+      // iOS — expo-audio's own permission prompt (denials are re-promptable
+      // from settings, so keep the retry route rather than hard-blocking).
+      const { requestRecordingPermissionsAsync } = await import('expo-audio');
+      const perm = await requestRecordingPermissionsAsync();
+      return perm?.granted ? 'granted' : 'denied';
     } catch {
-      setGranted(false);
+      return 'denied';
     }
   };
 
-  const handleRequestMic = () =>
-    requestSystemPermission(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, 'mic', setPermMic);
-
-  const handleRequestLoc = () =>
-    requestSystemPermission(
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      'loc',
-      setPermLoc,
-    );
-
-  const handleRequestNotif = () => {
-    if (Platform.OS === 'android' && !PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
-      setPermNotif(true);
-      return;
+  const requestLocationPermission = async (): Promise<'granted' | 'denied' | 'blocked'> => {
+    try {
+      if (Platform.OS === 'web') return 'granted';
+      if (Platform.OS === 'android') {
+        const res = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        );
+        if (res === PermissionsAndroid.RESULTS.GRANTED) return 'granted';
+        if (res === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) return 'blocked';
+        return 'denied';
+      }
+      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+      if (status === Location.PermissionStatus.GRANTED) return 'granted';
+      return canAskAgain === false ? 'blocked' : 'denied';
+    } catch {
+      return 'denied';
     }
-    requestSystemPermission(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS, 'notif', setPermNotif);
   };
 
   const handleFinish = () => {
-    stopNaturalVoice();
+    stopGreeting();
+    // Persist the entered profile (trimmed in the context) before moving on.
+    setUserName(nameInput);
+    setCaregiverPhone(phoneInput);
     if (languageChosen) {
       nav.navigate('Home');
     } else {
@@ -153,9 +170,40 @@ export default function OnboardingScreen() {
     }
   };
 
+  // The single high-trust action: requests both permissions, then finishes.
+  const handleEnableAndStart = async () => {
+    if (permStatus === 'granted') {
+      handleFinish();
+      return;
+    }
+    if (permStatus === 'requesting') return;
+    // Previously denied with "never ask again" → route to system settings.
+    if (permStatus === 'blocked') {
+      Linking.openSettings().catch(() => {});
+      return;
+    }
+
+    setPermStatus('requesting');
+    const micResult = await requestMicPermission();
+    const locResult = await requestLocationPermission();
+
+    if (micResult === 'granted' && locResult === 'granted') {
+      setPermStatus('granted');
+      handleFinish();
+      return;
+    }
+    // Hard "never ask again" on either permission → route to system settings.
+    // An ordinary denial stays retryable — onboarding is never a dead end.
+    if (micResult === 'blocked' || locResult === 'blocked') {
+      setPermStatus('blocked');
+      return;
+    }
+    setPermStatus('idle');
+  };
+
   return (
     <Screen showBack={false} showSOS={false} bg={colors.bg}>
-      {/* Top Bar: Stepper & Skip */}
+      {/* Top Bar: Stepper, Mute & Skip */}
       <View style={s.topBar}>
         <View style={s.brandRow}>
           <View style={s.logoPill}>
@@ -183,20 +231,36 @@ export default function OnboardingScreen() {
           ))}
         </View>
 
-        <Pressable
-          onPress={handleFinish}
-          style={s.skipBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Skip onboarding"
-        >
-          <AppText variant="small" weight="semibold" color={colors.textMuted}>
-            {selected === 'hi' ? 'छोड़ें' : 'Skip'}
-          </AppText>
-        </Pressable>
+        <View style={s.topActions}>
+          {/* Subtle mute/stop for the auto-playing greeting */}
+          <Pressable
+            onPress={stopGreeting}
+            style={s.muteBtn}
+            accessibilityRole="button"
+            accessibilityLabel={isPlayingVoice ? 'Stop greeting audio' : t('onb_listen')}
+          >
+            <Icon
+              name={isPlayingVoice ? 'volume-x' : 'volume-2'}
+              set="feather"
+              size={16}
+              color={isPlayingVoice ? '#34D399' : colors.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            onPress={handleFinish}
+            style={s.skipBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Skip onboarding"
+          >
+            <AppText variant="small" weight="semibold" color={colors.textMuted}>
+              {t('onb_skip')}
+            </AppText>
+          </Pressable>
+        </View>
       </View>
 
       {/* ========================================================
-          SLIDE 1: MEET SAHARA & VOICE PREVIEW
+          SLIDE 1: VOICE WELCOME & LANGUAGE
          ======================================================== */}
       {step === 1 && (
         <View style={s.slideContainer}>
@@ -218,10 +282,10 @@ export default function OnboardingScreen() {
             </View>
           </View>
 
-          {/* Headline & Mission */}
+          {/* Headline & mission */}
           <View style={s.headerBlock}>
             <AppText variant="h1" weight="bold" align="center" color={colors.text}>
-              {selected === 'hi' ? 'नमस्ते! मैं सहारा हूँ 🙏' : 'Meet Sahara, Your Voice Companion'}
+              {t('onb_s1_title')}
             </AppText>
             <AppText
               variant="body"
@@ -229,52 +293,24 @@ export default function OnboardingScreen() {
               color={colors.textMuted}
               style={{ marginTop: 4, lineHeight: 22 }}
             >
-              {selected === 'hi'
-                ? 'बुज़ुर्गों और परिवारों के लिए आसान आवाज़ साथी — बस बोलकर बात करें, बिना टाइपिंग के।'
-                : 'Thoughtful voice healthcare for seniors — simply speak naturally in Hindi or English.'}
+              {t('onb_s1_body')}
             </AppText>
+            {isPlayingVoice && (
+              <AppText variant="small" color="#34D399" align="center" style={{ marginTop: 6 }}>
+                {t('onb_s1_voice_now')}
+              </AppText>
+            )}
           </View>
-
-          {/* Interactive Spoken Voice Demo Card */}
-          <Card doubleBezel glow tint="emerald" style={{ width: '100%' }}>
-            <View style={s.voiceDemoRow}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Icon name="volume-2" size={18} color="#34D399" />
-                  <AppText variant="label" weight="bold" color="#34D399">
-                    {selected === 'hi' ? 'आवाज़ सुनकर देखें' : 'Hear Voice Preview'}
-                  </AppText>
-                </View>
-                <AppText variant="small" color={colors.textMuted} style={{ marginTop: 2 }}>
-                  {isPlayingVoice
-                    ? selected === 'hi'
-                      ? '🔊 सहारा बोल रहा है...'
-                      : '🔊 Sahara is speaking...'
-                    : selected === 'hi'
-                    ? 'दबाकर सहारा की दोस्ताना आवाज़ सुनें'
-                    : 'Tap to test clear natural speech'}
-                </AppText>
-              </View>
-
-              <Pressable
-                onPress={handlePlayVoiceGreeting}
-                style={[s.playButton, isPlayingVoice && s.playButtonActive]}
-                accessibilityRole="button"
-                accessibilityLabel="Play audio sample"
-              >
-                <Icon
-                  name={isPlayingVoice ? 'square' : 'play'}
-                  size={18}
-                  color={isPlayingVoice ? '#FFFFFF' : '#05070A'}
-                />
-              </Pressable>
-            </View>
-          </Card>
 
           {/* Language Selection: Double-Bezel Tactile Cards */}
           <View style={{ width: '100%', gap: space.sm }}>
-            <AppText variant="small" weight="bold" color={colors.textDim} style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
-              {selected === 'hi' ? 'अपनी पसंदीदा भाषा चुनें' : 'Choose Your Preferred Language'}
+            <AppText
+              variant="small"
+              weight="bold"
+              color={colors.textDim}
+              style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}
+            >
+              {t('onb_choose_lang')}
             </AppText>
 
             {(['hi', 'en'] as const).map((l) => (
@@ -298,9 +334,7 @@ export default function OnboardingScreen() {
                     {l === 'hi' ? 'हिंदी (Hindi)' : 'English (Indian)'}
                   </AppText>
                   <AppText variant="small" color={colors.textMuted}>
-                    {l === 'hi'
-                      ? 'आवाज़ व बातचीत हिंदी में'
-                      : 'Voice and chat in fluent English'}
+                    {l === 'hi' ? 'आवाज़ व बातचीत हिंदी में' : 'Voice and chat in fluent English'}
                   </AppText>
                 </View>
                 <View style={[s.radioCircle, selected === l && s.radioCircleActive]}>
@@ -317,25 +351,33 @@ export default function OnboardingScreen() {
             variant="primary"
             big
             style={{ width: '100%', marginTop: space.sm }}
-            onPress={() => setStep(2)}
+            onPress={() => {
+              stopGreeting();
+              setStep(2);
+            }}
           />
         </View>
       )}
 
       {/* ========================================================
-          SLIDE 2: EMERGENCY SAFETY (SIMPLE, NO JARGON)
+          SLIDE 2: WHAT IS SAHARA — 2-PILLAR MISSION (NO JARGON)
          ======================================================== */}
       {step === 2 && (
         <View style={s.slideContainer}>
           <View style={s.heroIconWrap}>
-            <View style={[s.shieldCircle, { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.35)' }]}>
-              <Icon name="shield" size={36} color="#EF4444" />
+            <View
+              style={[
+                s.shieldCircle,
+                { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.35)' },
+              ]}
+            >
+              <Icon name="heart-pulse" set="mci" size={36} color="#34D399" />
             </View>
           </View>
 
           <View style={s.headerBlock}>
             <AppText variant="h1" weight="bold" align="center" color={colors.text}>
-              {selected === 'hi' ? 'मुश्किल समय में परिवार और डॉक्टर साथ' : 'Help is Always One Touch Away'}
+              {t('onb_s2_title')}
             </AppText>
             <AppText
               variant="body"
@@ -343,79 +385,54 @@ export default function OnboardingScreen() {
               color={colors.textMuted}
               style={{ marginTop: 4, lineHeight: 22 }}
             >
-              {selected === 'hi'
-                ? 'अगर बुज़ुर्ग गिर जाएँ या तबियत बिगड़े, तो सहारा तुरंत परिवार और एम्बुलेंस दोनों को खबर करता है।'
-                : 'If a senior falls or feels unwell, Sahara immediately alerts family and emergency responders.'}
+              {t('onb_s2_body')}
             </AppText>
           </View>
 
-          {/* Safety Pillar Cards - Simple, warm, no confusing acronyms */}
-          <View style={{ width: '100%', gap: space.sm }}>
-            <Card doubleBezel glow tint="danger">
-              <View style={s.pillarRow}>
-                <View style={[s.pillarBadge, { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}>
-                  <Icon name="truck" size={20} color="#EF4444" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="label" weight="bold" color="#FCA5A5">
-                    {selected === 'hi' ? '108 सरकारी एम्बुलेंस अलर्ट' : '108 Emergency Ambulance'}
-                  </AppText>
-                  <AppText variant="small" color={colors.textMuted}>
-                    {selected === 'hi'
-                      ? 'घर का सटीक पता और स्वास्थ्य स्थिति बिना देरी के भेजी जाती है'
-                      : 'Sends your exact home location and vital info without any delay'}
-                  </AppText>
-                </View>
+          {/* Mission Pillar 1: daily chronic health support */}
+          <Card doubleBezel glow tint="emerald" style={{ width: '100%' }}>
+            <View style={s.pillarRow}>
+              <View style={[s.pillarBadge, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                <Icon name="activity" size={20} color="#34D399" />
               </View>
-            </Card>
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" weight="bold" color="#6EE7B7">
+                  {t('onb_s2_p1_title')}
+                </AppText>
+                <AppText variant="small" color={colors.textMuted}>
+                  {t('onb_s2_p1_body')}
+                </AppText>
+              </View>
+            </View>
+          </Card>
 
-            <Card doubleBezel tint="emerald">
-              <View style={s.pillarRow}>
-                <View style={[s.pillarBadge, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
-                  <Icon name="message-circle" size={20} color="#34D399" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="label" weight="bold" color="#6EE7B7">
-                    {selected === 'hi' ? 'परिवार को तुरंत WhatsApp मैसेज' : 'Instant WhatsApp to Family'}
-                  </AppText>
-                  <AppText variant="small" color={colors.textMuted}>
-                    {selected === 'hi'
-                      ? 'बेटे, बेटी या रिश्तेदार को फ़ौरन सूचना मिलती है'
-                      : 'Caregiver receives live alert with symptoms and action steps'}
-                  </AppText>
-                </View>
+          {/* Mission Pillar 2: 24/7 emergency lifeline */}
+          <Card doubleBezel tint="danger" style={{ width: '100%' }}>
+            <View style={s.pillarRow}>
+              <View style={[s.pillarBadge, { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}>
+                <Icon name="truck" size={20} color="#EF4444" />
               </View>
-            </Card>
-
-            <Card doubleBezel tint="cyan">
-              <View style={s.pillarRow}>
-                <View style={[s.pillarBadge, { backgroundColor: 'rgba(6, 182, 212, 0.2)' }]}>
-                  <Icon name="phone-call" size={20} color="#38BDF8" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="label" weight="bold" color="#7DD3FC">
-                    {selected === 'hi' ? 'सहारा लगातार लाइन पर बना रहता है' : 'Continuous Voice Support'}
-                  </AppText>
-                  <AppText variant="small" color={colors.textMuted}>
-                    {selected === 'hi'
-                      ? 'जब तक मदद नहीं पहुँचती, सहारा मरीज़ से बात करता रहता है'
-                      : 'Sahara stays speaking with the senior until help arrives safely'}
-                  </AppText>
-                </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" weight="bold" color="#FCA5A5">
+                  {t('onb_s2_p2_title')}
+                </AppText>
+                <AppText variant="small" color={colors.textMuted}>
+                  {t('onb_s2_p2_body')}
+                </AppText>
               </View>
-            </Card>
-          </View>
+            </View>
+          </Card>
 
           {/* Navigation Controls */}
           <View style={s.btnRow}>
             <Button
-              label={selected === 'hi' ? '← पीछे' : '← Back'}
+              label={t('onb_back')}
               variant="outline"
               style={{ flex: 1 }}
               onPress={() => setStep(1)}
             />
             <Button
-              label={selected === 'hi' ? 'अनुमतियाँ सेट करें →' : 'Set Permissions →'}
+              label={selected === 'hi' ? 'आगे बढ़ें →' : 'Continue →'}
               variant="primary"
               style={{ flex: 2 }}
               onPress={() => setStep(3)}
@@ -425,149 +442,115 @@ export default function OnboardingScreen() {
       )}
 
       {/* ========================================================
-          SLIDE 3: PRIVACY & REAL PERMISSIONS
+          SLIDE 3: SETUP — NAME, CAREGIVER & PERMISSIONS
          ======================================================== */}
       {step === 3 && (
         <View style={s.slideContainer}>
-          <View style={s.heroIconWrap}>
-            <View style={[s.shieldCircle, { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.35)' }]}>
-              <Icon name="lock" size={36} color="#34D399" />
-            </View>
-          </View>
-
           <View style={s.headerBlock}>
             <AppText variant="h1" weight="bold" align="center" color={colors.text}>
-              {selected === 'hi' ? '100% सुरक्षित और निजी' : 'Private & On-Device Security'}
+              {t('onb_s3_title')}
             </AppText>
             <AppText
               variant="body"
               align="center"
               color={colors.textMuted}
-              style={{ marginTop: 4, lineHeight: 22 }}
+              style={{ marginTop: 4, lineHeight: 20 }}
             >
-              {selected === 'hi'
-                ? 'आपका स्वास्थ्य डेटा आपके फ़ोन में सुरक्षित रहता है। केवल आपातकाल में अधिकृत लोगों से साझा होता है।'
-                : 'Your medical data stays local on your phone with zero advertising tracking.'}
+              {t('onb_s3_body')}
             </AppText>
           </View>
 
-          {/* Tactile Permission Cards that actually trigger system popups */}
-          <View style={{ width: '100%', gap: space.sm }}>
-            <Pressable
-              onPress={handleRequestMic}
-              style={[s.permToggleCard, permMic && s.permToggleActive]}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: permMic }}
-            >
-              <View style={[s.permIconBox, permMic && s.permIconBoxActive]}>
-                <Icon name="mic" size={20} color={permMic ? '#34D399' : colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="label" weight="bold" color={colors.text}>
-                  {selected === 'hi' ? 'माइक्रोफ़ोन (Microphone)' : 'Microphone Access'}
-                </AppText>
-                <AppText variant="small" color={colors.textMuted}>
-                  {permMic
-                    ? (selected === 'hi' ? '✓ अनुमति प्राप्त' : '✓ Permission granted')
-                    : permBlocked.mic
-                    ? (selected === 'hi' ? 'Settings में जाकर अनुमति दें →' : 'Open Settings to allow →')
-                    : (selected === 'hi' ? 'टैप करके अनुमति दें ताकि बोलकर बात कर सकें' : 'Tap to allow natural voice conversation')}
-                </AppText>
-              </View>
-              <Icon name={permMic ? 'check-circle' : 'circle'} size={22} color={permMic ? '#34D399' : colors.textDim} />
-            </Pressable>
-
-            <Pressable
-              onPress={handleRequestLoc}
-              style={[s.permToggleCard, permLoc && s.permToggleActive]}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: permLoc }}
-            >
-              <View style={[s.permIconBox, permLoc && s.permIconBoxActive]}>
-                <Icon name="map-pin" size={20} color={permLoc ? '#34D399' : colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="label" weight="bold" color={colors.text}>
-                  {selected === 'hi' ? 'आपातकालीन लोकेशन (GPS)' : 'Emergency Location (GPS)'}
-                </AppText>
-                <AppText variant="small" color={colors.textMuted}>
-                  {permLoc
-                    ? (selected === 'hi' ? '✓ अनुमति प्राप्त' : '✓ Permission granted')
-                    : permBlocked.loc
-                    ? (selected === 'hi' ? 'Settings में जाकर अनुमति दें →' : 'Open Settings to allow →')
-                    : (selected === 'hi' ? 'टैप करके अनुमति दें ताकि एम्बुलेंस सीधे घर पहुँचे' : 'Tap to allow 108 ambulance dispatch to home')}
-                </AppText>
-              </View>
-              <Icon name={permLoc ? 'check-circle' : 'circle'} size={22} color={permLoc ? '#34D399' : colors.textDim} />
-            </Pressable>
-
-            <Pressable
-              onPress={handleRequestNotif}
-              style={[s.permToggleCard, permNotif && s.permToggleActive]}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: permNotif }}
-            >
-              <View style={[s.permIconBox, permNotif && s.permIconBoxActive]}>
-                <Icon name="bell" size={20} color={permNotif ? '#34D399' : colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="label" weight="bold" color={colors.text}>
-                  {selected === 'hi' ? 'दवा व अलर्ट सूचनाएँ' : 'Medicine & Alert Notifications'}
-                </AppText>
-                <AppText variant="small" color={colors.textMuted}>
-                  {permNotif
-                    ? (selected === 'hi' ? '✓ अनुमति प्राप्त' : '✓ Permission granted')
-                    : permBlocked.notif
-                    ? (selected === 'hi' ? 'Settings में जाकर अनुमति दें →' : 'Open Settings to allow →')
-                    : (selected === 'hi' ? 'टैप करके समय पर दवा के रिमाइंडर चालू करें' : 'Tap to receive timely BP and dose reminders')}
-                </AppText>
-              </View>
-              <Icon name={permNotif ? 'check-circle' : 'circle'} size={22} color={permNotif ? '#34D399' : colors.textDim} />
-            </Pressable>
-          </View>
-
-          {/* Caregiver Optional Setup - NOT pre-linked */}
-          <Card warm doubleBezel style={{ width: '100%', marginTop: 2 }}>
+          {/* User Name */}
+          <Card warm doubleBezel style={{ width: '100%' }}>
             <View style={{ gap: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                <Icon name="users" size={20} color="#34D399" />
+                <Icon name="user" set="feather" size={20} color="#34D399" />
                 <AppText variant="label" weight="bold" color={colors.text}>
-                  {selected === 'hi' ? 'परिवार का फ़ोन नंबर (वैकल्पिक)' : 'Family Caregiver Phone (Optional)'}
+                  {t('onb_s3_name_label')}
                 </AppText>
               </View>
               <TextInput
-                value={caregiverPhone}
-                onChangeText={setCaregiverPhone}
-                placeholder={selected === 'hi' ? 'जैसे: 9876543210' : 'e.g. 9876543210'}
+                value={nameInput}
+                onChangeText={setNameInput}
+                placeholder={t('onb_s3_name_hint')}
+                placeholderTextColor={colors.textMuted}
+                returnKeyType="done"
+                autoCapitalize="words"
+                autoCorrect={false}
+                style={s.inputField}
+              />
+            </View>
+          </Card>
+
+          {/* Family Caregiver WhatsApp Number — saved for SOS alerts */}
+          <Card warm doubleBezel style={{ width: '100%' }}>
+            <View style={{ gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                <Icon name="phone-call" set="feather" size={20} color="#34D399" />
+                <AppText variant="label" weight="bold" color={colors.text}>
+                  {t('onb_s3_caregiver_label')}
+                </AppText>
+              </View>
+              <TextInput
+                value={phoneInput}
+                onChangeText={setPhoneInput}
+                placeholder={t('onb_s3_caregiver_hint')}
                 placeholderTextColor={colors.textMuted}
                 keyboardType="phone-pad"
-                style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255, 255, 255, 0.1)',
-                  borderRadius: radius.md,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  color: colors.text,
-                  fontSize: 15,
-                }}
+                returnKeyType="done"
+                style={s.inputField}
               />
               <AppText variant="small" color={colors.textMuted} style={{ fontSize: 11 }}>
-                {selected === 'hi'
-                  ? 'आपातकाल व रोज़ाना दवा की स्थिति इस नंबर पर WhatsApp द्वारा भेजी जाएगी। इसे बाद में भी जोड़ सकते हैं।'
-                  : 'Emergency alerts and daily medicine logs will sync to this number. You can also add it later.'}
+                {t('onb_s3_caregiver_sub')}
               </AppText>
             </View>
           </Card>
 
-          {/* Launch Button */}
+          {/* Single high-trust permission card — one button, real dialogs */}
+          <Pressable
+            onPress={handleEnableAndStart}
+            style={[s.permCard, permStatus === 'granted' && s.permCardActive]}
+            accessibilityRole="button"
+            accessibilityLabel={t('onb_s3_perm_title')}
+            disabled={permStatus === 'requesting'}
+          >
+            <View style={[s.permIconBox, permStatus === 'granted' && s.permIconBoxActive]}>
+              <Icon
+                name={permStatus === 'granted' ? 'check-circle' : 'lock'}
+                set="feather"
+                size={22}
+                color={permStatus === 'granted' ? '#34D399' : colors.textMuted}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="label" weight="bold" color={colors.text} style={{ fontSize: 16 }}>
+                {t('onb_s3_perm_title')}
+              </AppText>
+              <AppText variant="small" color={colors.textMuted}>
+                {permStatus === 'granted'
+                  ? t('onb_s3_perm_granted')
+                  : permStatus === 'blocked'
+                  ? t('onb_s3_perm_retry')
+                  : permStatus === 'requesting'
+                  ? selected === 'hi'
+                    ? 'अनुमति माँगी जा रही है…'
+                    : 'Asking for permission…'
+                  : t('onb_s3_perm_sub')}
+              </AppText>
+            </View>
+            {permStatus === 'requesting' && (
+              <Icon name="loader" set="feather" size={18} color={colors.textMuted} />
+            )}
+          </Pressable>
+
+          {/* Launch Button — requests permissions cleanly and finishes onboarding */}
           <Button
-            label={selected === 'hi' ? 'सहारा शुरू करें' : 'Start Sahara'}
+            label={permStatus === 'granted' ? t('onb_s3_finish') : t('onb_s3_enable')}
             trailingIcon="arrow-right"
             variant="primary"
             big
             style={{ width: '100%', marginTop: space.sm }}
-            onPress={handleFinish}
+            onPress={handleEnableAndStart}
           />
         </View>
       )}
@@ -625,6 +608,21 @@ const s = StyleSheet.create({
   stepPillCompleted: {
     backgroundColor: 'rgba(16, 185, 129, 0.45)',
   },
+  topActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  muteBtn: {
+    width: 32,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
   skipBtn: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -679,29 +677,6 @@ const s = StyleSheet.create({
   headerBlock: {
     alignItems: 'center',
     paddingHorizontal: space.sm,
-  },
-
-  // Voice Preview Card
-  voiceDemoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.sm,
-  },
-  playButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#34D399',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#10B981',
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  playButtonActive: {
-    backgroundColor: '#EF4444',
   },
 
   // Language Cards
@@ -779,8 +754,20 @@ const s = StyleSheet.create({
     marginTop: space.sm,
   },
 
-  // Permission Toggles
-  permToggleCard: {
+  // Setup inputs
+  inputField: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 15,
+  },
+
+  // Single permission card
+  permCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
@@ -790,7 +777,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  permToggleActive: {
+  permCardActive: {
     borderColor: 'rgba(16, 185, 129, 0.35)',
     backgroundColor: 'rgba(16, 185, 129, 0.05)',
   },

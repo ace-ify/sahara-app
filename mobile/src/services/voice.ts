@@ -86,6 +86,9 @@ export function useAgoraVoice() {
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
   const [sessionMode, setSessionMode] = useState<VoiceSessionMode | null>(null);
+  // Mirrors the local mic's published state on the RTC channel. Toggled by
+  // the composer mic button while a session is live.
+  const [muted, setMuted] = useState(false);
 
   // Prevents late backend responses from repopulating freshly cleared sessions
   const generationRef = useRef(0);
@@ -278,6 +281,8 @@ export function useAgoraVoice() {
   const startSession = async (lang: Language = 'hi') => {
     stopSpeaking();
     setState('connecting');
+    // A fresh call always starts with a hot mic.
+    setMuted(false);
 
     try {
       // 0. Stable channel → server-side memory keys survive across calls
@@ -458,7 +463,38 @@ export function useAgoraVoice() {
     setAgentId(null);
     setSessionMode(null);
     setState('idle');
+    setMuted(false);
   };
+
+  /**
+   * Composer mic button action while a session is live:
+   * - RTC native → engine.muteLocalAudioStream
+   * - RTC web → micTrack.setEnabled
+   * - voice loop → the loop's mic IS the dictation capture; expose muted as
+   *   the TalkScreen's kill-switch for its auto-listen effect (it checks
+   *   `muted` before starting a capture turn).
+   */
+  const toggleMute = useCallback((): boolean => {
+    const next = !muted;
+    if (sessionMode === 'rtc') {
+      if (nativeEngineRef.current?.muteLocalAudioStream) {
+        try {
+          nativeEngineRef.current.muteLocalAudioStream(next);
+        } catch (err) {
+          console.warn('muteLocalAudioStream failed:', err);
+        }
+      }
+      if (localMicTrackRef.current?.setEnabled) {
+        try {
+          localMicTrackRef.current.setEnabled(!next);
+        } catch (err) {
+          console.warn('mic track setEnabled failed:', err);
+        }
+      }
+    }
+    setMuted(next);
+    return next;
+  }, [muted, sessionMode]);
 
   const toggleSession = (lang: Language = 'hi') => {
     if (state === 'idle') {
@@ -484,6 +520,7 @@ export function useAgoraVoice() {
     setAudioLevel(0);
     setSessionMode(null);
     setState('idle');
+    setMuted(false);
 
     const newId = `sess-${Date.now()}`;
     setSessionId(newId);
@@ -587,7 +624,9 @@ export function useAgoraVoice() {
     audioLevel,
     currentlySpeakingId,
     sessionMode,
+    muted,
     toggleSession,
+    toggleMute,
     sendVoiceQuery,
     speakText,
     stopSpeaking,
