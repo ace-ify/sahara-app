@@ -416,10 +416,84 @@ function splitIntoSpeakableChunks(text: string): string[] {
 }
 
 export interface SpeakStreamCallbacks {
-  /** Called each time a new chunk starts playing (drives live captions). */
-  onChunk?: (chunkIndex: number, chunkText: string) => void;
+  /** Fires once when the first audio chunk actually starts playing. */
+  onFirstAudio?: () => void;
   onDone?: (fullText: string) => void;
   onError?: () => void;
+}
+
+// Raw 24kHz 16-bit mono PCM relayed by /api/tts/stream.
+const PCM_SAMPLE_RATE = 24000;
+// In-band failure marker the server appends when both Murf regions fail.
+const TTS_STREAM_ERROR = '__TTS_ERROR__';
+
+/**
+ * Web: schedules raw PCM chunks on ONE WebAudio timeline as they arrive —
+ * gapless by construction (each buffer starts where the last ends), which is
+ * what killed the old fragmented per-sentence <audio> clips.
+ */
+class PcmScheduler {
+  private ctx: AudioContext;
+  private nextStart = 0; // ctx timeline position where the next chunk plays
+  private pendingByte = 0; // leftover byte from an odd-length chunk
+  private sources = new Set<AudioBufferSourceNode>();
+  private stopped = false;
+
+  constructor(ctx: AudioContext) {
+    this.ctx = ctx;
+  }
+
+  /** Seconds of audio still queued to play (context timeline). */
+  get remaining(): number {
+    return Math.max(0, this.nextStart - this.ctx.currentTime);
+  }
+
+  schedule(bytes: Uint8Array): boolean {
+    if (this.stopped || !bytes.length) return false;
+    if (this.pendingByte) {
+      // Stitch the previous odd byte in front of this chunk.
+      const buf = new Uint8Array(bytes.length + 1);
+      buf[0] = this.pendingByte;
+      buf.set(bytes, 1);
+      bytes = buf;
+      this.pendingByte = 0;
+    }
+    if (bytes.length % 2) {
+      this.pendingByte = bytes[bytes.length - 1];
+      const trimmed = new Uint8Array(bytes.length - 1);
+      trimmed.set(bytes.subarray(0, bytes.length - 1));
+      bytes = trimmed;
+    }
+    const samples = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
+    if (!samples.length) return false;
+
+    const floats = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i += 1) floats[i] = samples[i] / 32768;
+
+    const buffer = this.ctx.createBuffer(1, floats.length, PCM_SAMPLE_RATE);
+    buffer.copyToChannel(floats, 0);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(this.ctx.destination);
+    // Small lead-in so a late chunk never backfills over played audio.
+    const when = Math.max(this.ctx.currentTime + 0.08, this.nextStart);
+    src.start(when);
+    this.nextStart = when + buffer.duration;
+    this.sources.add(src);
+    src.onended = () => this.sources.delete(src);
+    return true;
+  }
+
+  stop() {
+    this.stopped = true;
+    for (const s of this.sources) {
+      try {
+        s.stop();
+      } catch {}
+    }
+    this.sources.clear();
+  }
 }
 
 /**
@@ -432,27 +506,101 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
 
   const chunks: string[] = [];
   let closed = false;
-  let finishedAll = false;
   let generation = speechGeneration;
+  let playedAny = false;
+  let firstAudioFired = false;
+  let scheduler: PcmScheduler | null = null;
 
-  const emitChunk = (idx: number, text: string) => {
-    if (generation === speechGeneration) cb.onChunk?.(idx, text);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    // Reuse the gesture-primed context; create it if it somehow isn't yet.
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      if (!webAudioContext) webAudioContext = new AudioCtx();
+      if (webAudioContext && webAudioContext.state === 'suspended') {
+        webAudioContext.resume().catch(() => {});
+      }
+      scheduler = new PcmScheduler(webAudioContext);
+    }
+  }
+  const isWebStream = scheduler !== null;
+
+  const fireFirstAudio = () => {
+    if (!firstAudioFired) {
+      firstAudioFired = true;
+      cb.onFirstAudio?.();
+    }
   };
 
-  /** Play one Murf-synthesized clip; resolves when it finishes (or fails). */
-  const playClip = (idx: number, text: string): Promise<void> =>
+  /** Fetch one sentence from the streaming endpoint, scheduling PCM as it arrives. */
+  const streamSentence = async (text: string): Promise<void> => {
+    if (generation !== speechGeneration) return;
+    const baseUrl = getBackendBaseUrl();
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 2 && !res; attempt += 1) {
+      try {
+        const r = await fetch(`${baseUrl}/api/tts/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, lang }),
+        });
+        if (r.ok && r.body) {
+          res = r;
+          break;
+        }
+      } catch {
+        // brief retry
+      }
+    }
+    if (!res || !res.body) throw new Error('no response from tts stream');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let sawErrorMarker = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (generation !== speechGeneration) return;
+        if (!value || !value.length) continue;
+        // Murf failure marker arrives as a tiny ASCII-only tail chunk (real
+        // PCM chunks are kilobytes, so an exact match is never a false hit).
+        if (value.length <= TTS_STREAM_ERROR.length) {
+          const asText = decoder.decode(value);
+          if (asText === TTS_STREAM_ERROR) {
+            sawErrorMarker = true;
+            continue;
+          }
+        }
+        if (scheduler?.schedule(value)) {
+          playedAny = true;
+          fireFirstAudio();
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+    if (sawErrorMarker && !playedAny) throw new Error('murf stream failed both regions');
+  };
+
+  /** Native path: play each sentence via the cached blob endpoint. */
+  const playClipBlob = (text: string): Promise<void> =>
     new Promise((resolve) => {
       if (generation !== speechGeneration) {
         resolve();
         return;
       }
-      emitChunk(idx, text);
       speakNatural(
         text,
         lang,
         {
           onDone: () => resolve(),
           onError: () => resolve(),
+          onStart: () => {
+            playedAny = true;
+            fireFirstAudio();
+          },
         },
         { noStop: true },
       );
@@ -462,13 +610,22 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
     let next = 0;
     while (generation === speechGeneration) {
       if (next < chunks.length) {
-        const idx = next;
+        const text = chunks[next];
         next += 1;
-        await playClip(idx, chunks[idx]);
-        // If more text may still arrive and we're out of queued chunks, wait
-        // briefly for the next push before deciding we're finished.
-        if (!closed && next >= chunks.length) {
-          await new Promise((r) => setTimeout(r, 200));
+        try {
+          if (isWebStream) {
+            // Serialized fetches: sentence N+1's synthesis starts only after
+            // N's stream ends — synthesis runs ahead of playback, and Murf's
+            // per-region concurrency (2) is respected. Sentences never play
+            // out of order.
+            await streamSentence(text);
+          } else {
+            await playClipBlob(text);
+          }
+        } catch (err) {
+          // A single failed sentence is skipped (text still shows); the
+          // no-audio-at-all case is handled after the loop.
+          console.warn('[tts] stream sentence failed (skipping):', err);
         }
       } else if (closed) {
         break;
@@ -476,8 +633,32 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
         await new Promise((r) => setTimeout(r, 80));
       }
     }
-    if (generation === speechGeneration && closed && next >= chunks.length) {
-      finishedAll = true;
+
+    if (generation !== speechGeneration) return;
+
+    if (!playedAny) {
+      // Nothing was synthesized at all — device TTS keeps the turn audible.
+      const full = chunks.join(' ');
+      console.warn('[tts] stream produced no audio → device TTS fallback');
+      cb.onError?.();
+      speakWithDeviceTts(full, lang, {
+        onDone: () => {
+          if (activeStreamingSpeaker === (speakerRef as any)) activeStreamingSpeaker = null;
+        },
+      });
+      return;
+    }
+
+    // Web: wait for the scheduled tail to finish playing. Native: each clip
+    // already resolved on end, so we're done.
+    if (isWebStream && scheduler) {
+      // ponytail: 100ms polling; a SourceNode-ended promise would save ~50ms
+      while (generation === speechGeneration && scheduler.remaining > 0) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
+    if (generation === speechGeneration) {
       if (activeStreamingSpeaker === (speakerRef as any)) {
         activeStreamingSpeaker = null;
       }
@@ -489,7 +670,7 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
   // speaker object so its closures see the binding.
   let _pending = '';
 
-  // Identity ref: runQueue and playClip check which speaker is live.
+  // Identity ref: runQueue and streamSentence check which speaker is live.
   const speakerRef: any = {};
 
   const speaker = {
@@ -520,6 +701,7 @@ export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
     stop() {
       generation = -1; // invalidate this speaker against future stop calls
       closed = true;
+      scheduler?.stop();
       chunks.length = 0;
       _pending = '';
     },

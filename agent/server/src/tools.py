@@ -26,545 +26,212 @@ import httpx
 logger = logging.getLogger("uvicorn.error")
 
 # ============================================================================
-# 1. COMPREHENSIVE JAN AUSHADHI & BRANDED MEDICINES DATABASE (65+ Real Items)
+# 1. REAL PMBJP JAN AUSHADHI PRICE DATABASE (100+ medicines loaded from data/jan_aushadhi_db.json)
 # ============================================================================
 
-_PRICE_DB: Dict[str, Dict[str, Any]] = {
-    # --- Cardiovascular & Hypertension ---
-    "amlodipine": {
-        "medicine": "Amlodipine 5mg",
-        "branded_name": "Amlong / Norvasc / Stamlo",
-        "branded_price": "₹48 (10 गोलियां)",
-        "generic_price": "₹9 (10 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "Blood Pressure (BP)",
-        "use": "उच्च रक्तचाप (High BP) को नियंत्रित कर दिल के दौरे के जोखिम को कम करती है।",
-        "jan_aushadhi_code": "PMBJP-0012",
-    },
-    "telmisartan": {
-        "medicine": "Telmisartan 40mg",
-        "branded_name": "Telma 40 / Telmikind / Telsar",
-        "branded_price": "₹82 (10 गोलियां)",
-        "generic_price": "₹16 (10 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Blood Pressure (BP)",
-        "use": "रक्तचाप नियंत्रित रखने और गुर्दे की सुरक्षा के लिए दी जाती है।",
-        "jan_aushadhi_code": "PMBJP-0085",
-    },
-    "losartan": {
-        "medicine": "Losartan 50mg",
-        "branded_name": "Losacar / Repace / Tozaar",
-        "branded_price": "₹74 (10 गोलियां)",
-        "generic_price": "₹14 (10 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "Blood Pressure (BP)",
-        "use": "उच्च रक्तचाप और दिल की बीमारियों से सुरक्षा के लिए।",
-        "jan_aushadhi_code": "PMBJP-0091",
-    },
-    "atenolol": {
-        "medicine": "Atenolol 50mg",
-        "branded_name": "Aten 50 / Betacard",
-        "branded_price": "₹38 (14 गोलियां)",
-        "generic_price": "₹8 (14 गोलियां)",
-        "savings_percentage": "79%",
-        "category": "Beta Blocker / BP",
-        "use": "तेज़ दिल की धड़कन (Pulse) और उच्च रक्तचाप को सामान्य करने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0022",
-    },
-    "cilnidipine": {
-        "medicine": "Cilnidipine 10mg",
-        "branded_name": "Cilacar 10 / Cilaheart",
-        "branded_price": "₹115 (10 गोलियां)",
-        "generic_price": "₹24 (10 गोलियां)",
-        "savings_percentage": "79%",
-        "category": "Blood Pressure (BP)",
-        "use": "रक्तचाप कम करने और गुर्दे पर दबाव घटाने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0642",
-    },
-    "ramipril": {
-        "medicine": "Ramipril 2.5mg / 5mg",
-        "branded_name": "Cardace / Hopace",
-        "branded_price": "₹95 (15 गोलियां)",
-        "generic_price": "₹18 (15 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "Cardiovascular",
-        "use": "दिल की कार्यक्षमता बढ़ाने और हार्ट फेलियर से बचाव के लिए।",
-        "jan_aushadhi_code": "PMBJP-0078",
-    },
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_JA_DB_PATH = os.path.join(_DATA_DIR, "jan_aushadhi_db.json")
 
-    # --- Cholesterol & Blood Thinners ---
-    "atorvastatin": {
-        "medicine": "Atorvastatin 10mg",
-        "branded_name": "Atorva 10 / Storvas / Lipitor",
-        "branded_price": "₹110 (10 गोलियां)",
-        "generic_price": "₹22 (10 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Cholesterol (Statin)",
-        "use": "खून में खराब कोलेस्ट्रॉल (LDL) घटाकर नसों को ब्लॉक होने से बचाती है।",
-        "jan_aushadhi_code": "PMBJP-0028",
-    },
-    "rosuvastatin": {
-        "medicine": "Rosuvastatin 10mg",
-        "branded_name": "Rozavel 10 / Rosuvas / Crestor",
-        "branded_price": "₹195 (10 गोलियां)",
-        "generic_price": "₹35 (10 गोलियां)",
-        "savings_percentage": "82%",
-        "category": "Cholesterol (Statin)",
-        "use": "गंभीर कोलेस्ट्रॉल को तेज़ी से सामान्य स्तर पर लाने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0312",
-    },
-    "clopidogrel": {
-        "medicine": "Clopidogrel 75mg",
-        "branded_name": "Clopilet / Deplatt / Plavix",
-        "branded_price": "₹120 (10 गोलियां)",
-        "generic_price": "₹25 (10 गोलियां)",
-        "savings_percentage": "79%",
-        "category": "Blood Thinner",
-        "use": "खून का थक्का (Clot) जमने से रोककर दिल के दौरे और स्ट्रोक से बचाती है।",
-        "jan_aushadhi_code": "PMBJP-0144",
-    },
-    "aspirin": {
-        "medicine": "Aspirin 75mg (Ecosprin)",
-        "branded_name": "Ecosprin 75 / Loprin",
-        "branded_price": "₹18 (14 गोलियां)",
-        "generic_price": "₹5 (14 गोलियां)",
-        "savings_percentage": "72%",
-        "category": "Antiplatelet",
-        "use": "खून को पतला रखने और हृदय सुरक्षा के लिए रोज़ाना ली जाती है।",
-        "jan_aushadhi_code": "PMBJP-0019",
-    },
-
-    # --- Diabetes & Blood Sugar ---
-    "metformin": {
-        "medicine": "Metformin 500mg",
-        "branded_name": "Glycomet 500 / Cetapin / Glucophage",
-        "branded_price": "₹42 (10 गोलियां)",
-        "generic_price": "₹11 (10 गोलियां)",
-        "savings_percentage": "74%",
-        "category": "Type 2 Diabetes",
-        "use": "भोजन के बाद रक्त शर्करा (Blood Sugar) को नियंत्रित रखती है।",
-        "jan_aushadhi_code": "PMBJP-0056",
-    },
-    "glimepiride": {
-        "medicine": "Glimepiride 1mg / 2mg",
-        "branded_name": "Amaryl / Glynase / Zoryl",
-        "branded_price": "₹78 (10 गोलियां)",
-        "generic_price": "₹14 (10 गोलियां)",
-        "savings_percentage": "82%",
-        "category": "Type 2 Diabetes",
-        "use": "पैंक्रियाज से इंसुलिन का स्राव बढ़ाकर शुगर को कम करती है।",
-        "jan_aushadhi_code": "PMBJP-0043",
-    },
-    "teneligliptin": {
-        "medicine": "Teneligliptin 20mg",
-        "branded_name": "Tenalimac / Ziten / Tenglyn",
-        "branded_price": "₹145 (10 गोलियां)",
-        "generic_price": "₹28 (10 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "DPP-4 Inhibitor",
-        "use": "गुर्दे की समस्या वाले शुगर मरीजों के लिए सुरक्षित नई दवा।",
-        "jan_aushadhi_code": "PMBJP-0718",
-    },
-    "vildagliptin": {
-        "medicine": "Vildagliptin 50mg",
-        "branded_name": "Galvus 50 / Jalra",
-        "branded_price": "₹220 (10 गोलियां)",
-        "generic_price": "₹42 (10 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "Diabetes",
-        "use": "लंबे समय से अनियंत्रित डायबिटीज को संतुलित करने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0824",
-    },
-    "dapagliflozin": {
-        "medicine": "Dapagliflozin 10mg",
-        "branded_name": "Forxiga / Oxra",
-        "branded_price": "₹490 (10 गोलियां)",
-        "generic_price": "₹65 (10 गोलियां)",
-        "savings_percentage": "87%",
-        "category": "SGLT2 Inhibitor",
-        "use": "पेशाब के रास्ते अतिरिक्त शुगर बाहर निकालकर दिल और गुर्दे की रक्षा करती है।",
-        "jan_aushadhi_code": "PMBJP-1140",
-    },
-
-    # --- Pain, Fever & Inflammation ---
-    "paracetamol": {
-        "medicine": "Paracetamol 650mg / 500mg",
-        "branded_name": "Dolo 650 / Calpol 650 / Crocin",
-        "branded_price": "₹35 (15 गोलियां)",
-        "generic_price": "₹12 (10 गोलियां)",
-        "savings_percentage": "66%",
-        "category": "Antipyretic / Analgesic",
-        "use": "बुखार उतारने और सामान्य बदन दर्द व सिरदर्द से राहत देती है।",
-        "jan_aushadhi_code": "PMBJP-0068",
-    },
-    "ibuprofen": {
-        "medicine": "Ibuprofen 400mg",
-        "branded_name": "Brufen 400 / Ibugesic",
-        "branded_price": "₹28 (15 गोलियां)",
-        "generic_price": "₹7 (10 गोलियां)",
-        "savings_percentage": "75%",
-        "category": "NSAID Pain Relief",
-        "use": "मांसपेशियों के दर्द, सूजन और मोच में तेज़ी से राहत देती है।",
-        "jan_aushadhi_code": "PMBJP-0048",
-    },
-    "aceclofenac": {
-        "medicine": "Aceclofenac 100mg + Paracetamol",
-        "branded_name": "Zerodol-P / Hifenac-P / Aceclo-P",
-        "branded_price": "₹95 (10 गोलियां)",
-        "generic_price": "₹22 (10 गोलियां)",
-        "savings_percentage": "77%",
-        "category": "Joint & Bone Pain",
-        "use": "गठिया (Arthritis), जोड़ों के दर्द और पीठ दर्द में आराम देती है।",
-        "jan_aushadhi_code": "PMBJP-0215",
-    },
-    "diclofenac": {
-        "medicine": "Diclofenac Sodium 50mg / Gel",
-        "branded_name": "Voveran 50 / Volini Gel",
-        "branded_price": "₹65 (10 गोलियां / 30g)",
-        "generic_price": "₹14 (10 गोलियां / 30g)",
-        "savings_percentage": "78%",
-        "category": "Pain Relief",
-        "use": "तीव्र दर्द, चोट की सूजन और हड्डियों के दर्द को शांत करती है।",
-        "jan_aushadhi_code": "PMBJP-0036",
-    },
-    "tramadol": {
-        "medicine": "Tramadol 50mg",
-        "branded_name": "Tramazac / Ultracet",
-        "branded_price": "₹140 (10 गोलियां)",
-        "generic_price": "₹28 (10 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Moderate-Severe Pain",
-        "use": "ऑपरेशन के बाद या असहनीय तीव्र दर्द के लिए डॉक्टर की सलाह पर।",
-        "jan_aushadhi_code": "PMBJP-0182",
-    },
-
-    # --- Gastrointestinal, Acidity & Liver ---
-    "pantoprazole": {
-        "medicine": "Pantoprazole 40mg / Pan-D",
-        "branded_name": "Pan 40 / Pantocid / Pan-D",
-        "branded_price": "₹135 (10 गोलियां)",
-        "generic_price": "₹26 (10 गोलियां)",
-        "savings_percentage": "81%",
-        "category": "Acidity / GERD",
-        "use": "पेट में गैस, सीने में जलन और एसिडिटी से तुरंत राहत देती है (सुबह खाली पेट)।",
-        "jan_aushadhi_code": "PMBJP-0067",
-    },
-    "omeprazole": {
-        "medicine": "Omeprazole 20mg / Omez",
-        "branded_name": "Omez 20 / Ocid",
-        "branded_price": "₹65 (15 कैप्सूल)",
-        "generic_price": "₹14 (15 कैप्सूल)",
-        "savings_percentage": "78%",
-        "category": "Gastric Acid Reducer",
-        "use": "पेट के छालों (Ulcers) और पुरानी एसिडिटी को ठीक करती है।",
-        "jan_aushadhi_code": "PMBJP-0062",
-    },
-    "rabeprazole": {
-        "medicine": "Rabeprazole 20mg + Domperidone",
-        "branded_name": "Razo-D / Rabeprazole-DSR",
-        "branded_price": "₹180 (10 कैप्सूल)",
-        "generic_price": "₹34 (10 कैप्सूल)",
-        "savings_percentage": "81%",
-        "category": "Acid Reflux & Nausea",
-        "use": "खट्टी डकार, जी मिचलाना और भारी एसिडिटी में ली जाती है।",
-        "jan_aushadhi_code": "PMBJP-0428",
-    },
-    "ranitidine": {
-        "medicine": "Ranitidine 150mg (Rantac)",
-        "branded_name": "Rantac 150 / Zinetac",
-        "branded_price": "₹35 (10 गोलियां)",
-        "generic_price": "₹8 (10 गोलियां)",
-        "savings_percentage": "77%",
-        "category": "Antacid / H2 Blocker",
-        "use": "हल्की अपच और पेट में जलन के लिए पारंपरिक दवा।",
-        "jan_aushadhi_code": "PMBJP-0079",
-    },
-    "antacid_syrup": {
-        "medicine": "Antacid Suspension (Gel)",
-        "branded_name": "Digene Gel / Gelusil",
-        "branded_price": "₹145 (200ml)",
-        "generic_price": "₹38 (200ml)",
-        "savings_percentage": "74%",
-        "category": "Antacid Liquid",
-        "use": "पेट में तुरंत ठंडक और जलन से राहत देने वाला सिरप।",
-        "jan_aushadhi_code": "PMBJP-0199",
-    },
-
-    # --- Antibiotics & Anti-Infectives ---
-    "amoxicillin": {
-        "medicine": "Amoxicillin 500mg + Clavulanic Acid 125mg",
-        "branded_name": "Augmentin 625 / Moxikind-CV",
-        "branded_price": "₹210 (10 गोलियां)",
-        "generic_price": "₹55 (10 गोलियां)",
-        "savings_percentage": "74%",
-        "category": "Broad-Spectrum Antibiotic",
-        "use": "गले, फेफड़ों, छाती और कान-नाक के गंभीर बैक्टीरियल संक्रमण को खत्म करती है।",
-        "jan_aushadhi_code": "PMBJP-0016",
-    },
-    "azithromycin": {
-        "medicine": "Azithromycin 500mg",
-        "branded_name": "Azithral 500 / Azee 500",
-        "branded_price": "₹130 (5 गोलियां)",
-        "generic_price": "₹32 (5 गोलियां)",
-        "savings_percentage": "75%",
-        "category": "Macrolide Antibiotic",
-        "use": "गले में खराश, टॉन्सिल, खांसी और श्वसन संक्रमण का 3 से 5 दिन का कोर्स।",
-        "jan_aushadhi_code": "PMBJP-0030",
-    },
-    "ciprofloxacin": {
-        "medicine": "Ciprofloxacin 500mg",
-        "branded_name": "Ciplox 500 / Cifran",
-        "branded_price": "₹50 (10 गोलियां)",
-        "generic_price": "₹14 (10 गोलियां)",
-        "savings_percentage": "72%",
-        "category": "Fluoroquinolone Antibiotic",
-        "use": "पेशाब में संक्रमण (UTI), पेट के दस्त और टाइफाइड के उपचार में।",
-        "jan_aushadhi_code": "PMBJP-0033",
-    },
-    "cefixime": {
-        "medicine": "Cefixime 200mg",
-        "branded_name": "Taxim-O 200 / Zifi 200 / Mahacef",
-        "branded_price": "₹120 (10 गोलियां)",
-        "generic_price": "₹35 (10 गोलियां)",
-        "savings_percentage": "71%",
-        "category": "Cephalosporin Antibiotic",
-        "use": "टाइफाइड बुखार और श्वसन नली के संक्रमण के लिए।",
-        "jan_aushadhi_code": "PMBJP-0128",
-    },
-    "metronidazole": {
-        "medicine": "Metronidazole 400mg",
-        "branded_name": "Flagyl 400 / Metrogyl",
-        "branded_price": "₹28 (15 गोलियां)",
-        "generic_price": "₹7 (15 गोलियां)",
-        "savings_percentage": "75%",
-        "category": "Anti-amoebic",
-        "use": "पेट में मरोड़, दस्त और आंतों के संक्रमण को ठीक करती है।",
-        "jan_aushadhi_code": "PMBJP-0058",
-    },
-
-    # --- Respiratory, Allergy & Cough ---
-    "cetirizine": {
-        "medicine": "Cetirizine 10mg",
-        "branded_name": "Cetcip / Alerid / Okacet",
-        "branded_price": "₹25 (10 गोलियां)",
-        "generic_price": "₹5 (10 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Antihistamine / Allergy",
-        "use": "छींकें, नाक बहना, आंखों में खुजली और धूल की एलर्जी से राहत देती है।",
-        "jan_aushadhi_code": "PMBJP-0032",
-    },
-    "levocetirizine": {
-        "medicine": "Levocetirizine 5mg + Montelukast 10mg",
-        "branded_name": "Montair-LC / Montek-LC / Telekast-L",
-        "branded_price": "₹180 (10 गोलियां)",
-        "generic_price": "₹38 (10 गोलियां)",
-        "savings_percentage": "79%",
-        "category": "Allergy & Asthma",
-        "use": "पुरानी एलर्जी, रात की खांसी और सांस की नली की सूजन को कम करती है।",
-        "jan_aushadhi_code": "PMBJP-0465",
-    },
-    "cough_syrup": {
-        "medicine": "Dextromethorphan + Chlorpheniramine Syrup",
-        "branded_name": "Ascoril-D / Benadryl / Grilinctus",
-        "branded_price": "₹135 (100ml)",
-        "generic_price": "₹32 (100ml)",
-        "savings_percentage": "76%",
-        "category": "Cough Relief",
-        "use": "सूखी और परेशान करने वाली खांसी को शांत करता है।",
-        "jan_aushadhi_code": "PMBJP-0158",
-    },
-    "salbutamol_inhaler": {
-        "medicine": "Salbutamol Inhaler 100mcg",
-        "branded_name": "Asthalin Inhaler",
-        "branded_price": "₹170 (200 MDI)",
-        "generic_price": "₹65 (200 MDI)",
-        "savings_percentage": "62%",
-        "category": "Bronchodilator (Asthma)",
-        "use": "दमा (Asthma) या सांस फूलने पर तुरंत सांस की नलियों को खोलता है।",
-        "jan_aushadhi_code": "PMBJP-0352",
-    },
-
-    # --- Thyroid & Hormones ---
-    "levothyroxine": {
-        "medicine": "Levothyroxine Sodium 50mcg / 100mcg",
-        "branded_name": "Thyronorm / Eltroxin",
-        "branded_price": "₹185 (120 गोलियां)",
-        "generic_price": "₹45 (120 गोलियां)",
-        "savings_percentage": "76%",
-        "category": "Thyroid Supplement",
-        "use": "थायरॉयड की कमी (Hypothyroidism) को पूरा करने के लिए रोज़ाना सुबह खाली पेट।",
-        "jan_aushadhi_code": "PMBJP-0245",
-    },
-
-    # --- Vitamins, Minerals & Calcium ---
-    "calcium_vit_d3": {
-        "medicine": "Calcium 500mg + Vitamin D3",
-        "branded_name": "Shelcal 500 / Cipcal 500",
-        "branded_price": "₹140 (15 गोलियां)",
-        "generic_price": "₹28 (15 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Bone Health / Calcium",
-        "use": "कमज़ोर हड्डियों, जोड़ों के चटकने और ऑस्टियोपोरोसिस से बचाव के लिए।",
-        "jan_aushadhi_code": "PMBJP-0031",
-    },
-    "vitamin_b_complex": {
-        "medicine": "Vitamin B-Complex with B12",
-        "branded_name": "Becosules / Cobadex",
-        "branded_price": "₹55 (20 कैप्सूल)",
-        "generic_price": "₹12 (20 कैप्सूल)",
-        "savings_percentage": "78%",
-        "category": "Multivitamin",
-        "use": "कमज़ोरी, मुंह के छाले और थकान दूर करने के लिए आवश्यक विटामिन।",
-        "jan_aushadhi_code": "PMBJP-0088",
-    },
-    "methylcobalamin": {
-        "medicine": "Methylcobalamin 1500mcg (B12)",
-        "branded_name": "Nurokind / Mecobalamin",
-        "branded_price": "₹160 (10 गोलियां)",
-        "generic_price": "₹32 (10 गोलियां)",
-        "savings_percentage": "80%",
-        "category": "Nerve Health (Vit B12)",
-        "use": "हाथ-पैरों में झनझनाहट, सुन्नपन और नसों की कमज़ोरी को ठीक करती है।",
-        "jan_aushadhi_code": "PMBJP-0412",
-    },
-    "iron_folic_acid": {
-        "medicine": "Ferrous Ascorbate + Folic Acid",
-        "branded_name": "Orofer-XT / Autrin",
-        "branded_price": "₹190 (10 गोलियां)",
-        "generic_price": "₹30 (10 गोलियां)",
-        "savings_percentage": "84%",
-        "category": "Anemia (Iron)",
-        "use": "खून की कमी (Anemia) दूर करने और हीमोग्लोबिन बढ़ाने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0388",
-    },
-    "vitamin_c": {
-        "medicine": "Vitamin C 500mg Chewable",
-        "branded_name": "Limcee / Celin 500",
-        "branded_price": "₹38 (15 गोलियां)",
-        "generic_price": "₹9 (15 गोलियां)",
-        "savings_percentage": "76%",
-        "category": "Immunity Booster",
-        "use": "रोग प्रतिरोधक क्षमता (इम्यूनिटी) बढ़ाने और त्वचा स्वास्थ्य के लिए।",
-        "jan_aushadhi_code": "PMBJP-0089",
-    },
-
-    # --- Eye, Ear & Topical Ointments ---
-    "ciprofloxacin_eye_drops": {
-        "medicine": "Ciprofloxacin Eye/Ear Drops 0.3%",
-        "branded_name": "Ciplox Eye Drops",
-        "branded_price": "₹22 (10ml)",
-        "generic_price": "₹6 (10ml)",
-        "savings_percentage": "73%",
-        "category": "Eye/Ear Anti-infective",
-        "use": "आंखों में लाली, कीचड़, जलन या कान में दर्द-संक्रमण के लिए।",
-        "jan_aushadhi_code": "PMBJP-0034",
-    },
-    "silver_sulfadiazine": {
-        "medicine": "Silver Sulfadiazine Cream 1%",
-        "branded_name": "Burnol / Silverex",
-        "branded_price": "₹95 (20g)",
-        "generic_price": "₹22 (20g)",
-        "savings_percentage": "77%",
-        "category": "Burn & Wound Cream",
-        "use": "जलने, घाव और छिलने पर संक्रमण रोकने और त्वचा भरने के लिए।",
-        "jan_aushadhi_code": "PMBJP-0081",
-    },
-    "clotrimazole": {
-        "medicine": "Clotrimazole Fungal Cream 1%",
-        "branded_name": "Candid / Canesten",
-        "branded_price": "₹115 (30g)",
-        "generic_price": "₹25 (30g)",
-        "savings_percentage": "78%",
-        "category": "Antifungal Skin Cream",
-        "use": "दाद, खाज, खुजली और पसीने के फंगल इन्फेक्शन को मिटाती है।",
-        "jan_aushadhi_code": "PMBJP-0035",
-    },
+_FORM_UNITS_HI: Dict[str, str] = {
+    "tablet": "गोलियां",
+    "capsule": "कैप्सूल",
+    "syrup": "ml",
+    "inhaler": "पफ",
+    "gel": "g",
+    "cream": "g",
+    "drops": "ml",
+    "sachet": "सैशे",
+    "injection": "इंजेक्शन",
 }
 
-# Synonyms index for fast fuzzy searching across brand names and Hindi names
+
+def _fmt_price(v: float) -> str:
+    iv = int(v)
+    return f"₹{iv if v == iv else v}"
+
+
+def _entry_to_price_row(e: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert one dataset row into the response shape the mobile savings card expects."""
+    branded = float(e.get("branded_mrp", 0) or 0)
+    ja = float(e.get("ja_price", 0) or 0)
+    savings = round((1 - ja / branded) * 100) if branded > 0 and 0 < ja < branded else 0
+    pack_str = f"{e.get('pack', 10)} {_FORM_UNITS_HI.get(e.get('form', 'tablet'), 'यूनिट')}"
+    salt = e.get("salt", "")
+    strength = e.get("strength", "")
+    return {
+        "medicine": f"{salt} {strength}".strip(),
+        "salt": salt,
+        "strength": strength,
+        "branded_name": " / ".join(e.get("branded_names", []) or []),
+        "branded_price": f"{_fmt_price(branded)} ({pack_str})",
+        "generic_price": f"{_fmt_price(ja)} ({pack_str})",
+        "savings_percentage": f"{savings}%",
+        "savings_pct_num": savings,
+        "category": e.get("category", ""),
+        "category_hi": e.get("category_hi", ""),
+        "use": e.get("use_hi", ""),
+        "jan_aushadhi_code": e.get("ja_code", ""),
+        "form": e.get("form", "tablet"),
+    }
+
+
+def _load_price_db() -> Dict[str, Dict[str, Any]]:
+    """Load the authentic PMBJP price dataset; empty dict → live Groq tier serves."""
+    db: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(_JA_DB_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        if isinstance(rows, dict):
+            rows = rows.get("medicines", [])
+        for e in rows:
+            key = (e.get("key") or "").strip().lower()
+            if key:
+                db[key] = _entry_to_price_row(e)
+        logger.info("Jan Aushadhi DB loaded: %d medicines from %s", len(db), _JA_DB_PATH)
+    except FileNotFoundError:
+        logger.warning("jan_aushadhi_db.json not found (%s) — live Groq pricing tier will serve all lookups", _JA_DB_PATH)
+    except Exception as e:
+        logger.warning("Failed to load Jan Aushadhi DB: %s", e)
+    return db
+
+
+_PRICE_DB: Dict[str, Dict[str, Any]] = _load_price_db()
+
+
+def _build_indexes(db: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+    """Brand-name / salt index → key of each salt's default (most prescribed) strength."""
+    defaults: Dict[str, str] = {}
+    for key, row in db.items():
+        salt_l = row.get("salt", "").lower().strip()
+        if salt_l:
+            defaults.setdefault(salt_l, key)
+    for key, row in db.items():
+        if row.get("default_strength"):
+            salt_l = row.get("salt", "").lower().strip()
+            if salt_l:
+                defaults[salt_l] = key
+    idx: Dict[str, str] = {}
+    for key, row in db.items():
+        salt_l = row.get("salt", "").lower().strip()
+        default_key = defaults.get(salt_l, key)
+        for brand in row.get("branded_name", "").split("/"):
+            b = brand.strip().lower()
+            if b and b not in idx:
+                idx[b] = default_key
+        if salt_l and salt_l not in idx:
+            idx[salt_l] = default_key
+    return idx
+
+
+_BRAND_SALT_INDEX: Dict[str, str] = _build_indexes(_PRICE_DB)
+
+# Small Hindi/Hinglish voice overlay (brand & salt words users actually say) → dataset keys.
+# The price data itself is 100% from the dataset; this only fixes script transliteration.
 _MEDICINE_SYNONYMS: Dict[str, str] = {
-    # Brand -> Key
-    "dolo": "paracetamol",
-    "dolo 650": "paracetamol",
-    "calpol": "paracetamol",
-    "crocin": "paracetamol",
-    "paracip": "paracetamol",
-    "पैरासिटामोल": "paracetamol",
-    "बुखार": "paracetamol",
-    "amlong": "amlodipine",
-    "stamlo": "amlodipine",
-    "norvasc": "amlodipine",
-    "एम्लोडिपिन": "amlodipine",
-    "telma": "telmisartan",
-    "telma 40": "telmisartan",
-    "टेल्मिसार्टन": "telmisartan",
-    "glycomet": "metformin",
-    "glycomet 500": "metformin",
-    "cetapin": "metformin",
-    "मेटफ़ॉर्मिन": "metformin",
-    "शुगर की दवा": "metformin",
-    "atorva": "atorvastatin",
-    "storvas": "atorvastatin",
-    "अटोर्वास्टेटिन": "atorvastatin",
-    "कोलेस्ट्रॉल": "atorvastatin",
-    "pan 40": "pantoprazole",
-    "pan d": "pantoprazole",
-    "pan-d": "pantoprazole",
-    "pantocid": "pantoprazole",
-    "पेंटोप्राजोल": "pantoprazole",
-    "गैस की दवा": "pantoprazole",
-    "एसिडिटी": "pantoprazole",
-    "omez": "omeprazole",
-    "ocid": "omeprazole",
-    "ओमेप्राजोल": "omeprazole",
-    "razo d": "rabeprazole",
-    "rabeprazole": "rabeprazole",
-    "augmentin": "amoxicillin",
-    "augmentin 625": "amoxicillin",
-    "moxikind": "amoxicillin",
-    "एमोक्सिसिलिन": "amoxicillin",
-    "azithral": "azithromycin",
-    "azee": "azithromycin",
-    "एज़िथ्रोमाइसिन": "azithromycin",
-    "cifran": "ciprofloxacin",
-    "ciplox": "ciprofloxacin",
-    "सिप्रोफ्लोक्सासिन": "ciprofloxacin",
-    "taxim o": "cefixime",
-    "zifi": "cefixime",
-    "सेफिक्सिम": "cefixime",
-    "brufen": "ibuprofen",
-    "ibugesic": "ibuprofen",
-    "voveran": "diclofenac",
-    "volini": "diclofenac",
-    "zerodol p": "aceclofenac",
-    "hifenac": "aceclofenac",
-    "cetcip": "cetirizine",
-    "alerid": "cetirizine",
-    "okacet": "cetirizine",
-    "सिट्रिजिन": "cetirizine",
-    "एलर्जी": "cetirizine",
-    "montair lc": "levocetirizine",
-    "montek lc": "levocetirizine",
-    "asthalin": "salbutamol_inhaler",
-    "inhaler": "salbutamol_inhaler",
-    "इनहेलर": "salbutamol_inhaler",
-    "thyronorm": "levothyroxine",
-    "eltroxin": "levothyroxine",
-    "थायराइड": "levothyroxine",
-    "shelcal": "calcium_vit_d3",
-    "calcium": "calcium_vit_d3",
-    "कैल्शियम": "calcium_vit_d3",
+    "dolo": "paracetamol_650mg",
+    "dolo 650": "paracetamol_650mg",
+    "calpol": "paracetamol_650mg",
+    "crocin": "paracetamol_500mg",
+    "पैरासिटामोल": "paracetamol_500mg",
+    "बुखार की दवा": "paracetamol_650mg",
+    "amlong": "amlodipine_5mg",
+    "stamlo": "amlodipine_5mg",
+    "norvasc": "amlodipine_5mg",
+    "एम्लोडिपिन": "amlodipine_5mg",
+    "telma": "telmisartan_40mg",
+    "टेल्मिसार्टन": "telmisartan_40mg",
+    "losacar": "losartan_50mg",
+    "repace": "losartan_50mg",
+    "aten": "atenolol_50mg",
+    "betacard": "atenolol_50mg",
+    "cardace": "ramipril_5mg",
+    "hopace": "ramipril_5mg",
+    "ecosprin": "aspirin_75mg",
+    "loprin": "aspirin_75mg",
+    "deplatt": "clopidogrel_75mg",
+    "clopilet": "clopidogrel_75mg",
+    "glycomet": "metformin_500mg",
+    "cetapin": "metformin_500mg",
+    "मेटफ़ॉर्मिन": "metformin_500mg",
+    "शुगर की दवा": "metformin_500mg",
+    "amaryl": "glimepiride_2mg",
+    "zoryl": "glimepiride_2mg",
+    "ग्लिमेपिराइड": "glimepiride_2mg",
+    "ziten": "teneligliptin_20mg",
+    "tenalimac": "teneligliptin_20mg",
+    "galvus": "vildagliptin_50mg",
+    "jalra": "vildagliptin_50mg",
+    "forxiga": "dapagliflozin_10mg",
+    "oxra": "dapagliflozin_10mg",
+    "atorva": "atorvastatin_20mg",
+    "storvas": "atorvastatin_20mg",
+    "अटोर्वास्टेटिन": "atorvastatin_20mg",
+    "कोलेस्ट्रॉल की दवा": "atorvastatin_20mg",
+    "rozavel": "rosuvastatin_10mg",
+    "rosuvas": "rosuvastatin_10mg",
+    "pan 40": "pantoprazole_40mg",
+    "pan d": "pantoprazole_40mg",
+    "pan-d": "pantoprazole_40mg",
+    "pantocid": "pantoprazole_40mg",
+    "पेंटोप्राजोल": "pantoprazole_40mg",
+    "गैस की दवा": "pantoprazole_40mg",
+    "एसिडिटी की दवा": "pantoprazole_40mg",
+    "omez": "omeprazole_20mg",
+    "ocid": "omeprazole_20mg",
+    "ओमेप्राजोल": "omeprazole_20mg",
+    "razo d": "rabeprazole_20mg",
+    "razo": "rabeprazole_20mg",
+    "rantac": "ranitidine_150mg",
+    "digene": "antacid_gel_200ml",
+    "gelusil": "antacid_gel_200ml",
+    "augmentin": "amoxicillin_clavulanic_625mg",
+    "augmentin 625": "amoxicillin_clavulanic_625mg",
+    "moxikind cv": "amoxicillin_clavulanic_625mg",
+    "एमोक्सिसिलिन": "amoxicillin_clavulanic_625mg",
+    "azithral": "azithromycin_500mg",
+    "azee 500": "azithromycin_500mg",
+    "एज़िथ्रोमाइसिन": "azithromycin_500mg",
+    "cifran": "ciprofloxacin_500mg",
+    "ciplox": "ciprofloxacin_500mg",
+    "सिप्रोफ्लोक्सासिन": "ciprofloxacin_500mg",
+    "taxim o": "cefixime_200mg",
+    "zifi 200": "cefixime_200mg",
+    "सेफिक्सिम": "cefixime_200mg",
+    "flagyl": "metronidazole_400mg",
+    "brufen": "ibuprofen_400mg",
+    "ibugesic": "ibuprofen_400mg",
+    "combiflam": "ibuprofen_400mg",
+    "voveran": "diclofenac_50mg",
+    "volini": "diclofenac_gel_30g",
+    "zerodol p": "aceclofenac_100mg",
+    "hifenac p": "aceclofenac_100mg",
+    "cetcip": "levocetirizine_5mg",
+    "alerid": "levocetirizine_5mg",
+    "okacet": "cetirizine_10mg",
+    "सिट्रिजिन": "cetirizine_10mg",
+    "एलर्जी की दवा": "levocetirizine_5mg",
+    "montair lc": "levocetirizine_5mg",
+    "montek lc": "montelukast_10mg",
+    "allegra": "fexofenadine_120mg",
+    "asthalin": "salbutamol_inhaler_100mcg",
+    "inhaler": "salbutamol_inhaler_100mcg",
+    "इनहेलर": "salbutamol_inhaler_100mcg",
+    "दमा की दवा": "salbutamol_inhaler_100mcg",
+    "thyronorm": "levothyroxine_50mcg",
+    "eltroxin": "levothyroxine_50mcg",
+    "थायराइड की दवा": "levothyroxine_50mcg",
+    "shelcal": "calcium_vitd3_500mg",
+    "कैल्शियम की दवा": "calcium_vitd3_500mg",
     "becosules": "vitamin_b_complex",
     "b complex": "vitamin_b_complex",
-    "nurokind": "methylcobalamin",
-    "orofer": "iron_folic_acid",
-    "iron": "iron_folic_acid",
-    "limcee": "vitamin_c",
-    "burnol": "silver_sulfadiazine",
-    "candid": "clotrimazole",
+    "nurokind": "methylcobalamin_1500mcg",
+    "orofer xt": "iron_folic_acid",
+    "खून की कमी की दवा": "iron_folic_acid",
+    "limcee": "vitamin_c_500mg",
+    "burnol": "silver_sulfadiazine_1",
+    "candid": "clotrimazole_1",
+    "daivonex": "mupirocin_2",
 }
-
-
 # ============================================================================
 # 2. COMPREHENSIVE MULTI-STATE HEALTHCARE FACILITIES DIRECTORY (40+ Facilities)
 # ============================================================================

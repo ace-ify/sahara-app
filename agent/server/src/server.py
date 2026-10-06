@@ -1107,6 +1107,68 @@ async def tts_endpoint(req: TtsRequest):
         raise HTTPException(status_code=502, detail=f"TTS error: {e}")
 
 
+@router.post("/api/tts/stream")
+async def tts_stream_endpoint(req: TtsRequest):
+    """Stream Murf Falcon PCM audio chunk-by-chunk as it is synthesized.
+
+    Raw 24kHz/16-bit/mono PCM over chunked transfer — the client schedules
+    chunks on a WebAudio timeline as they arrive, so playback starts with
+    Murf's ~100ms time-to-first-audio instead of waiting for the whole clip.
+    No cache (streams can't be cached); the blob /api/tts stays for native.
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    murf_key = os.getenv("MURF_API_KEY", "") or MURF_API_KEY
+    if not murf_key:
+        raise HTTPException(status_code=503, detail="MURF_API_KEY not configured on server")
+
+    payload = {
+        "text": text[:2000],
+        "voice_id": "Pooja",
+        "style": "Conversational",
+        "model": "Falcon",
+        "multiNativeLocale": "hi-IN",
+        "format": "PCM",
+        "sampleRate": 24000,
+    }
+    headers = {"api-key": murf_key, "Content-Type": "application/json"}
+    endpoints = [
+        "https://in.api.murf.ai/v1/speech/stream",
+        "https://global.api.murf.ai/v1/speech/stream",
+    ]
+
+    client = get_murf_client()
+
+    async def relay():
+        # Try endpoints in order; the first that yields any 200 body bytes wins.
+        # Once a single audio byte has been relayed we never retry — a second
+        # endpoint would replay the sentence as duplicate audio.
+        for ep in endpoints:
+            got_audio = False
+            try:
+                async with client.stream("POST", ep, headers=headers, json=payload) as res:
+                    if res.status_code != 200:
+                        logger.warning("Murf Falcon stream %s status=%s", ep, res.status_code)
+                        continue
+                    async for chunk in res.aiter_bytes():
+                        if chunk:
+                            got_audio = True
+                            yield chunk
+            except Exception as e:
+                logger.warning("Murf Falcon stream %s failed: %s", ep, e)
+                if got_audio:
+                    return
+                continue
+            if got_audio:
+                return
+        # ponytail: in-band error marker; client falls back to device TTS
+        yield b"__TTS_ERROR__"
+
+    return StreamingResponse(relay(), media_type="application/octet-stream")
+
+
 @router.post("/api/transcribe")
 async def transcribe_endpoint(
     request: Request,

@@ -8,7 +8,7 @@ import {
   clearLatestCard,
   sendChatMessage,
 } from './api';
-import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio } from './tts';
+import { speakNatural, speakNaturalStream, stopNaturalVoice, primeWebAudio, unlockWebAudio } from './tts';
 import { ConvState } from '../components/StateBadge';
 import { Language } from '../context/AppContext';
 import {
@@ -581,6 +581,30 @@ export function useAgoraVoice() {
 
     try {
       let liveReply = '';
+      // Start the streaming speaker BEFORE the LLM call — sentences are
+      // synthesized and scheduled while later text is still generating, so
+      // audio begins before the full reply exists (the phone 2-4s lag fix).
+      const speaker = speakNaturalStream(lang, {
+        onFirstAudio: () => {
+          if (gen !== generationRef.current) return;
+          setState('speaking');
+          setCurrentlySpeakingId(agentMsgId);
+        },
+        onDone: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
+          setState((curr) => {
+            if (curr !== 'speaking') return curr;
+            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+          });
+        },
+        onError: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
+          setState((curr) => {
+            if (curr !== 'speaking') return curr;
+            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+          });
+        },
+      });
       const chatRes = await sendChatMessage(
         trimmed,
         ch || 'default',
@@ -591,6 +615,8 @@ export function useAgoraVoice() {
           onDelta: (delta) => {
             if (gen !== generationRef.current) return;
             liveReply += delta;
+            // Feed the streaming speaker: complete sentences go to Murf now.
+            speaker.pushText(delta);
             // Live caption: grow the agent bubble in place as text streams.
             setMessages((prev) =>
               prev.map((m) => (m.id === agentMsgId ? { ...m, text: liveReply } : m)),
@@ -618,28 +644,13 @@ export function useAgoraVoice() {
       // Final text update for message bubble and card
       setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply, card: turnCard } : m)));
 
-      // Speak the complete, natural reply as ONE single fluent Ayushi audio stream (NO chunking / NO fragments)
-      setState('speaking');
-      setCurrentlySpeakingId(agentMsgId);
-
-      speakNatural(reply, lang, {
-        onDone: () => {
-          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
-          setState((curr) => {
-            if (curr !== 'speaking') return curr;
-            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
-          });
-        },
-        onError: () => {
-          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
-          setState((curr) => {
-            if (curr !== 'speaking') return curr;
-            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
-          });
-        },
-      });
+      // Flush the remaining partial sentence into the streaming speaker; it
+      // plays out fully scheduled audio and then resolves onDone.
+      speaker.close();
     } catch (err) {
       console.warn('sendVoiceQuery error:', err);
+      // Kill any half-started streaming speaker so it can't dangle.
+      stopNaturalVoice();
       setCurrentlySpeakingId(null);
       if (stateRef.current === 'thinking' || stateRef.current === 'speaking') {
         setState(sessionModeRef.current === 'loop' ? 'listening' : 'idle');
