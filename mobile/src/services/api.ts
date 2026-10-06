@@ -4,7 +4,7 @@ export function getBackendBaseUrl(): string {
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     if (isLocal) {
-      return `http://${window.location.hostname}:8000`;
+      return 'http://127.0.0.1:8000';
     }
   }
   if (process.env.EXPO_PUBLIC_API_URL) {
