@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import * as Location from 'expo-location';
 
 export function getBackendBaseUrl(): string {
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
@@ -75,6 +76,55 @@ export async function checkBackendHealth(force = false): Promise<boolean> {
 
 export function isBackendReachable(): boolean | null {
   return backendReachable;
+}
+
+// --- Real device GPS (expo-location) ---
+
+let cachedGps: { lat: number; lon: number; ts: number } | null = null;
+
+/**
+ * Live device coordinates for facility search & store locators.
+ * Web navigator.geolocation on web; expo-location on native.
+ * Returns null when permission denied or unavailable — callers must
+ * degrade to a query-only search, never to fake coordinates.
+ */
+export async function getDeviceGps(maxAgeMs = 120000): Promise<{ lat: number; lon: number } | null> {
+  if (cachedGps && Date.now() - cachedGps.ts < maxAgeMs) {
+    return { lat: cachedGps.lat, lon: cachedGps.lon };
+  }
+  try {
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+      return await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            cachedGps = { lat: pos.coords.latitude, lon: pos.coords.longitude, ts: Date.now() };
+            resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+          },
+          () => resolve(null),
+          { timeout: 5000, maximumAge: maxAgeMs },
+        );
+      });
+    }
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== Location.PermissionStatus.GRANTED) return null;
+    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    cachedGps = { lat: pos.coords.latitude, lon: pos.coords.longitude, ts: Date.now() };
+    return { lat: pos.coords.latitude, lon: pos.coords.longitude };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Google Maps search intent for nearby Jan Aushadhi Kendras, centered on the
+ * user's live coordinates when available.
+ */
+export function janAushadhiStoreUrl(lat?: number | null, lon?: number | null): string {
+  const q = encodeURIComponent('Pradhan Mantri Jan Aushadhi Kendra');
+  if (lat != null && lon != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${q}&center=${lat},${lon}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${q}`;
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
@@ -339,6 +389,7 @@ export async function getFacilities(
   facilityType: string = 'all',
   lat?: number,
   lon?: number,
+  opts?: { autoGps?: boolean },
 ): Promise<{
   status: string;
   count: number;
@@ -346,11 +397,20 @@ export async function getFacilities(
   facilities: Facility[];
   message_hi: string;
 }> {
+  let effLat = lat;
+  let effLon = lon;
+  if ((effLat == null || effLon == null) && opts?.autoGps !== false) {
+    const gps = await getDeviceGps();
+    if (gps) {
+      effLat = gps.lat;
+      effLon = gps.lon;
+    }
+  }
   const params = new URLSearchParams();
   if (query) params.set('query', query);
   if (facilityType) params.set('facility_type', facilityType);
-  if (lat !== undefined && lat !== null) params.set('lat', String(lat));
-  if (lon !== undefined && lon !== null) params.set('lon', String(lon));
+  if (effLat !== undefined && effLat !== null) params.set('lat', String(effLat));
+  if (effLon !== undefined && effLon !== null) params.set('lon', String(effLon));
 
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/facilities?${params.toString()}`);
@@ -573,6 +633,8 @@ export async function sendChatMessage(
   // SSE reading needs response-body streaming (ReadableStream.getReader) —
   // available in browsers, not on RN/Hermes fetch. Native gets the JSON path.
   const doStream = Platform.OS === 'web' && Boolean(streamHandlers?.onDelta);
+  // Non-blocking GPS attach: 2s cap, permission-denied → null → omitted.
+  const gps = await Promise.race([getDeviceGps(), new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
   try {
     const res = await fetchWithTimeout(
       `${getBackendBaseUrl()}/llm/chat/completions?channel=${encodeURIComponent(channel)}&lang=${encodeURIComponent(lang)}`,
@@ -591,6 +653,9 @@ export async function sendChatMessage(
           // real caregiver instead of a server-side placeholder contact.
           patient: profile?.patient || undefined,
           caregiver_phone: profile?.caregiverPhone || undefined,
+          // Live GPS so server-side find_facility queries are location-aware.
+          // Permission-denied → null → facility search falls back to city query.
+          ...(gps ? { lat: gps.lat, lon: gps.lon } : {}),
         }),
       },
       // Streamed replies are already rendering to screen as they arrive; give

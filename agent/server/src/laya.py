@@ -390,6 +390,7 @@ def extract_scheme_query(text: str) -> str:
     lower = text.lower()
     scheme_triggers = [
         "vayoshri", "वयोश्री", "wheelchair", "छड़ी", "hearing aid",
+        "esanjeevani", "ई-संजीवनी", "टेली परामर्श", "teleconsult", "video consult",
         "chiranjeevi", "चिरंजीवी", "dialysis", "डायलिसिस", "tb", "टीबी", "nikshay", "निक्षय",
         "delhi", "दिल्ली", "mohalla", "मोहल्ला", "mahatma phule", "mjpjay",
         "janani", "जननी", "jssk", "jsy", "pmsma", "indradhanush", "इंद्रधनुष",
@@ -689,7 +690,7 @@ def classify_intent(text: str) -> ClassificationResult:
         )
 
     # 6. Companion Tools: Government Scheme (Ayushman Bharat, Vayoshri, etc.)
-    if any(k in lower_text for k in ["आयुष्मान", "योजना", "सरकारी योजना", "हेल्थ कार्ड", "कार्ड", "scheme", "ayushman", "pmjay", "yojana", "yojna", "वयश्री", "वयोश्री", "vayoshri", "चिरंजीवी", "chiranjeevi", "डायलिसिस", "dialysis", "निक्षय", "nikshay", "टीबी"]):
+    if any(k in lower_text for k in ["आयुष्मान", "योजना", "सरकारी योजना", "हेल्थ कार्ड", "कार्ड", "scheme", "ayushman", "pmjay", "yojana", "yojna", "वयश्री", "वयोश्री", "vayoshri", "चिरंजीवी", "chiranjeevi", "डायलिसिस", "dialysis", "निक्षय", "nikshay", "टीबी", "esanjeevani", "ई-संजीवनी", "टेली परामर्श", "teleconsult", "sanjeevani"]):
         scheme_name = extract_scheme_query(clean_text)
         return ClassificationResult(
             is_emergency=False,

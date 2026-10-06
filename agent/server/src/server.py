@@ -427,7 +427,19 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
 
     # 4. Handle Normal Companion Tools
     elif classification and classification.tool_name:
-        tool_res = tools.execute_tool(classification.tool_name, classification.tool_args or {})
+        tool_args = dict(classification.tool_args or {})
+        # Inject the client's live GPS coordinates into facility search so
+        # results are truly location-aware (mobile sends lat/lon in payload).
+        if classification.tool_name == "find_facility":
+            try:
+                p_lat = float(payload.get("lat"))
+                p_lon = float(payload.get("lon"))
+                if abs(p_lat) > 0.1 and abs(p_lon) > 0.1:
+                    tool_args["lat"] = p_lat
+                    tool_args["lon"] = p_lon
+            except (TypeError, ValueError):
+                pass
+        tool_res = tools.execute_tool(classification.tool_name, tool_args)
         card = laya.build_card_for_tool(classification.tool_name, tool_res)
         if card:
             turn_card = card
@@ -544,6 +556,7 @@ Rules:
 For each medicine provide:
 - id: unique string
 - name: medicine brand or generic name exactly as written
+- salt: the active generic salt name (e.g. "Amlodipine" for Amlong, "Metformin" for Glycomet); empty string if unreadable
 - dosage: e.g. "500mg", "5mg", "10ml"
 - timing: in Hindi e.g. "सुबह नाश्ते के बाद", "रात खाने के बाद"
 - purpose: in Hindi e.g. "ब्लड प्रेशर", "शुगर", "दर्द"
@@ -551,7 +564,7 @@ For each medicine provide:
 - confirmed: true
 
 Return ONLY valid JSON:
-{"medicines": [ {"id": "m1", "name": "...", "dosage": "...", "timing": "...", "purpose": "...", "frequency": "...", "confirmed": true} ]}
+{"medicines": [ {"id": "m1", "name": "...", "salt": "...", "dosage": "...", "timing": "...", "purpose": "...", "frequency": "...", "confirmed": true} ]}
 
 Prescription text (may be empty when a photo is provided):
 """
@@ -596,6 +609,24 @@ Prescription text (may be empty when a photo is provided):
                 parsed = r.json()["choices"][0]["message"]["content"]
                 data = json.loads(parsed)
                 medicines = data.get("medicines", [])
+                # Cross-reference each extracted medicine against the real
+                # PMBJP dataset so the app can show genuine price savings.
+                for m in medicines:
+                    price = tools.get_medicine_price(m.get("name", ""))
+                    if price.get("source") == "pmbi_verified_database":
+                        m["jan_aushadhi_generic"] = {
+                            "genericName": price.get("salt", ""),
+                            "brandedMRP": price.get("branded_price", ""),
+                            "genericPrice": price.get("generic_price", ""),
+                            "savingsPct": price.get("savings_percentage", ""),
+                        }
+                    elif price.get("branded_price") and price["branded_price"] != "—":
+                        m["jan_aushadhi_generic"] = {
+                            "genericName": price.get("medicine", ""),
+                            "brandedMRP": price.get("branded_price", ""),
+                            "genericPrice": price.get("generic_price", ""),
+                            "savingsPct": price.get("savings_percentage", ""),
+                        }
                 # Model must not fabricate: empty list is a valid answer.
                 return {"status": "success", "source": "image" if (req.image_base64 or "").strip() else "text", "medicines": medicines}
             logger.warning("Prescription scan model error status=%s body=%s", r.status_code, r.text[:300])

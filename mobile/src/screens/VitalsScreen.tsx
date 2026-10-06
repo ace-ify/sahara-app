@@ -6,10 +6,141 @@ import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
 import { colors, space, radius, sans } from '../theme';
 import { logVital, getVitalsHistory } from '../services/api';
+import { getItem, setItem } from '../services/storage';
 import { useApp } from '../context/AppContext';
 import { Card } from '../components/Card';
 import { useSharedValue, withTiming } from 'react-native-reanimated';
 import { CircularProgress } from '../components/reacticx';
+
+// --- Real NEWS2 triage (client mirror of the server's laya.calculate_news2_score) ---
+type Band = 'GREEN' | 'YELLOW' | 'ORANGE' | 'RED';
+
+interface News2Result {
+  score: number;
+  band: Band;
+  reasons: string[];
+}
+
+function news2ForVital(type: string, value: string): News2Result {
+  let score = 0;
+  const reasons: string[] = [];
+  let singleParamRed = false;
+
+  const t = type.toLowerCase();
+  if (t.includes('bp')) {
+    const m = value.match(/(\d{2,3})\s*\/\s*(\d{2,3})/);
+    if (m) {
+      const sys = parseInt(m[1], 10);
+      const dia = parseInt(m[2], 10);
+      if (sys >= 180 || dia >= 110) {
+        score += 3;
+        singleParamRed = true;
+        reasons.push(`अत्यधिक उच्च BP (SBP ${sys})`);
+      } else if (sys <= 90) {
+        score += 3;
+        singleParamRed = true;
+        reasons.push(`गंभीर निम्न BP (SBP ${sys})`);
+      } else if (sys <= 100) {
+        score += 2;
+        reasons.push(`निम्न BP (SBP ${sys})`);
+      } else if (sys <= 110) {
+        score += 1;
+        reasons.push(`हल्का निम्न BP (SBP ${sys})`);
+      } else if (sys >= 160) {
+        score += 2;
+        reasons.push(`उच्च BP स्टेज 2 (SBP ${sys})`);
+      }
+    }
+  } else if (t.includes('pulse')) {
+    const p = parseInt(value, 10);
+    if (!isNaN(p)) {
+      if (p >= 131 || p <= 40) {
+        score += 3;
+        singleParamRed = true;
+        reasons.push(`गंभीर नाड़ी गति (${p} bpm)`);
+      } else if (p >= 111) {
+        score += 2;
+        reasons.push(`तीव्र धड़कन (${p} bpm)`);
+      } else if (p <= 50) {
+        score += 1;
+        reasons.push(`धीमी धड़कन (${p} bpm)`);
+      } else if (p >= 91) {
+        score += 1;
+        reasons.push(`हल्की बढ़ी धड़कन (${p} bpm)`);
+      }
+    }
+  } else if (t.includes('spo2')) {
+    const s = parseInt(value, 10);
+    if (!isNaN(s)) {
+      if (s <= 85) {
+        score += 3;
+        singleParamRed = true;
+        reasons.push(`गंभीर ऑक्सीजन कमी (SpO2 ${s}%)`);
+      } else if (s <= 91) {
+        score += 2;
+        reasons.push(`ऑक्सीजन कम (SpO2 ${s}%)`);
+      } else if (s <= 93) {
+        score += 1;
+        reasons.push(`हल्की ऑक्सीजन कमी (SpO2 ${s}%)`);
+      }
+    }
+  } else if (t.includes('sugar')) {
+    const g = parseInt(value, 10);
+    if (!isNaN(g)) {
+      if (g >= 400 || g <= 50) {
+        score += 3;
+        singleParamRed = true;
+        reasons.push(`खतरनाक शुगर (${g} mg/dL)`);
+      } else if (g >= 250) {
+        score += 2;
+        reasons.push(`उच्च शुगर (${g} mg/dL)`);
+      }
+    }
+  }
+
+  const band: Band =
+    score >= 7 || singleParamRed ? 'RED' : score >= 5 ? 'ORANGE' : score >= 1 ? 'YELLOW' : 'GREEN';
+  return { score, band, reasons };
+}
+
+const BAND_LABELS: Record<Band, string> = {
+  GREEN: 'सामान्य',
+  YELLOW: 'हल्का ध्यान',
+  ORANGE: 'मध्यम जोखिम',
+  RED: 'क्रिटिकल अलर्ट',
+};
+const BAND_COLORS: Record<Band, string> = {
+  GREEN: colors.brand,
+  YELLOW: colors.warn,
+  ORANGE: colors.warn,
+  RED: colors.dangerBright,
+};
+
+const VITALS_HISTORY_KEY = 'sahara.vitals.history.v1';
+
+interface StoredVital {
+  id: string;
+  type: string;
+  value: string;
+  unit: string;
+  timestamp: string;
+  status: string;
+  band: Band;
+}
+
+async function loadStoredVitals(): Promise<StoredVital[]> {
+  try {
+    const raw = await getItem(VITALS_HISTORY_KEY);
+    if (raw) return JSON.parse(raw) as StoredVital[];
+  } catch {}
+  return [];
+}
+
+async function persistVitals(list: StoredVital[]): Promise<void> {
+  try {
+    await setItem(VITALS_HISTORY_KEY, JSON.stringify(list.slice(0, 200)));
+  } catch {}
+}
 
 function Vital({
   title,
@@ -58,26 +189,56 @@ export default function VitalsScreen() {
   const [sugar, setSugar] = useState('--');
   const [spo2, setSpo2] = useState('--');
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [vitalsHistory, setVitalsHistory] = useState<any[]>([]);
+  const [vitalsHistory, setVitalsHistory] = useState<StoredVital[]>([]);
 
   // Manual entry fields
   const [inputVal, setInputVal] = useState('');
   const [selectedVitalType, setSelectedVitalType] = useState<'BP' | 'Pulse' | 'Sugar' | 'SpO2'>('BP');
 
-  const loadHistory = () => {
-    getVitalsHistory().then((res) => {
-      if (res && res.history) {
-        setVitalsHistory(res.history);
-        const latestBp = res.history.find((h) => h.type.toLowerCase().includes('bp'));
-        if (latestBp) setBp(latestBp.value);
-        const latestPulse = res.history.find((h) => h.type.toLowerCase().includes('pulse'));
-        if (latestPulse) setPulse(latestPulse.value);
-        const latestSugar = res.history.find((h) => h.type.toLowerCase().includes('sugar'));
-        if (latestSugar) setSugar(latestSugar.value);
-        const latestSpo2 = res.history.find((h) => h.type.toLowerCase().includes('spo2'));
-        if (latestSpo2) setSpo2(latestSpo2.value);
+  const applyLatest = (list: StoredVital[]) => {
+    const latestBp = list.find((h) => h.type.toLowerCase().includes('bp'));
+    if (latestBp) setBp(latestBp.value);
+    const latestPulse = list.find((h) => h.type.toLowerCase().includes('pulse'));
+    if (latestPulse) setPulse(latestPulse.value);
+    const latestSugar = list.find((h) => h.type.toLowerCase().includes('sugar'));
+    if (latestSugar) setSugar(latestSugar.value);
+    const latestSpo2 = list.find((h) => h.type.toLowerCase().includes('spo2'));
+    if (latestSpo2) setSpo2(latestSpo2.value);
+  };
+
+  // Local AsyncStorage history is the source of truth for the chart/history view;
+  // the server copy is best-effort sync for the doctor dashboard.
+  const loadHistory = async () => {
+    const stored = await loadStoredVitals();
+    setVitalsHistory(stored);
+    applyLatest(stored);
+    // Merge server-side readings not yet stored locally (e.g. voice-logged).
+    try {
+      const res = await getVitalsHistory();
+      if (res && res.history && res.history.length > 0) {
+        const storedIds = new Set(stored.map((v) => `${v.type}:${v.value}:${v.timestamp}`));
+        const serverRows: StoredVital[] = res.history
+          .filter((h: any) => !storedIds.has(`${h.type}:${h.value}:${h.timestamp}`))
+          .map((h: any) => {
+            const r = news2ForVital(h.type, h.value);
+            return {
+              id: h.id || `srv-${h.type}-${h.timestamp || Date.now()}`,
+              type: h.type,
+              value: h.value,
+              unit: h.unit,
+              timestamp: h.timestamp || '—',
+              status: h.status || BAND_LABELS[r.band],
+              band: r.band,
+            };
+          });
+        if (serverRows.length > 0) {
+          const merged = [...serverRows, ...stored].slice(0, 200);
+          setVitalsHistory(merged);
+          applyLatest(merged);
+          await persistVitals(merged);
+        }
       }
-    }).catch(() => {});
+    } catch {}
   };
 
   useEffect(() => {
@@ -86,34 +247,50 @@ export default function VitalsScreen() {
 
   const handleLogVital = async (type: string, val: string, unit: string) => {
     if (!val || val.includes('--')) return;
+
+    // Real NEWS2 triage drives the band + message immediately.
+    const triage = news2ForVital(type, val);
+    const bandLabel = BAND_LABELS[triage.band];
     let msg = '';
-    if (type.toLowerCase().includes('bp')) {
-      const sys = parseInt(val.split('/')[0]) || 120;
-      if (lang === 'hi') {
-        msg = sys >= 140
-          ? `चेतावनी: आपका BP ${val} थोड़ा बढ़ा हुआ है। आराम करें और पानी पिएं।`
-          : `आपका BP ${val} दर्ज हो गया है (सामान्य)।`;
-      } else {
-        msg = sys >= 140
-          ? `Alert: Your BP ${val} is elevated. Please rest, drink water, and re-check.`
-          : `Your BP ${val} has been logged (Normal).`;
-      }
-      setBp(val);
-    } else if (type.toLowerCase().includes('pulse')) {
-      setPulse(val);
-      msg = lang === 'hi' ? `धड़कन (${val} ${unit}) दर्ज हो गई है।` : `Pulse (${val} ${unit}) logged.`;
-    } else if (type.toLowerCase().includes('sugar')) {
-      setSugar(val);
-      msg = lang === 'hi' ? `शुगर रीडिंग (${val} ${unit}) दर्ज हो गई है।` : `Sugar reading (${val} ${unit}) logged.`;
+    if (lang === 'hi') {
+      msg =
+        triage.band === 'RED'
+          ? `⚠️ क्रिटिकल (${bandLabel}): ${val} — कृपया तुरंत डॉक्टर से संपर्क करें।`
+          : triage.band === 'ORANGE'
+            ? `⚠️ ${bandLabel}: ${val} — आराम करें, थोड़ी देर में दोबारा नापें।`
+            : `${type.toUpperCase()} ${val} ${unit} दर्ज हो गया (${bandLabel})।`;
     } else {
-      setSpo2(val);
-      msg = lang === 'hi' ? `SpO2 (${val} ${unit}) दर्ज हो गया है।` : `SpO2 (${val} ${unit}) logged.`;
+      msg =
+        triage.band === 'RED'
+          ? `⚠️ CRITICAL: ${val} — contact a doctor immediately.`
+          : triage.band === 'ORANGE'
+            ? `⚠️ Elevated: ${val} — rest and re-check shortly.`
+            : `${type.toUpperCase()} ${val} ${unit} logged (${bandLabel}).`;
     }
+
+    if (type.toLowerCase().includes('bp')) setBp(val);
+    else if (type.toLowerCase().includes('pulse')) setPulse(val);
+    else if (type.toLowerCase().includes('sugar')) setSugar(val);
+    else setSpo2(val);
 
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 5000);
+
+    // Persist locally first (AsyncStorage) so history survives offline.
+    const record: StoredVital = {
+      id: `v-${Date.now()}`,
+      type,
+      value: val,
+      unit,
+      timestamp: new Date().toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-IN'),
+      status: bandLabel,
+      band: triage.band,
+    };
+    const next = [record, ...vitalsHistory].slice(0, 200);
+    setVitalsHistory(next);
+    await persistVitals(next);
+
     await logVital(type, val, unit).catch(() => {});
-    loadHistory();
   };
 
   const handleManualSubmit = () => {
@@ -127,8 +304,15 @@ export default function VitalsScreen() {
     setInputVal('');
   };
 
-  const isBpAlarm = bp !== '--/--' && parseInt(bp.split('/')[0]) >= 140;
-  const isSugarAlarm = sugar !== '--' && parseInt(sugar) > 140;
+  // NEWS2 bands for the latest reading of each vital
+  const latestBand = (type: string): Band => {
+    const latest = vitalsHistory.find((h) => h.type.toLowerCase().includes(type));
+    return latest ? latest.band : 'GREEN';
+  };
+  const bpBand = bp !== '--/--' ? latestBand('bp') : 'GREEN';
+  const sugarBand = sugar !== '--' ? latestBand('sugar') : 'GREEN';
+  const isBpAlarm = bpBand === 'RED' || bpBand === 'ORANGE';
+  const isSugarAlarm = sugarBand === 'RED' || sugarBand === 'ORANGE';
   const healthScore = isBpAlarm || isSugarAlarm ? 76 : (vitalsHistory.length > 0 ? 98 : 95);
   const stabilityProgress = useSharedValue(95);
 
@@ -312,9 +496,22 @@ export default function VitalsScreen() {
                     {item.timestamp || 'हाल ही में दर्ज'}
                   </AppText>
                 </View>
-                <View style={[s.pill, { backgroundColor: item.status?.includes('बढ़ा') || item.status?.includes('High') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)' }]}>
-                  <AppText variant="small" weight="bold" color={item.status?.includes('बढ़ा') || item.status?.includes('High') ? colors.dangerBright : colors.brand}>
-                    {item.status || (lang === 'hi' ? 'सामान्य' : 'Normal')}
+                <View
+                  style={[
+                    s.pill,
+                    {
+                      backgroundColor:
+                        item.band === 'RED'
+                          ? 'rgba(239, 68, 68, 0.15)'
+                          : item.band === 'ORANGE' || item.band === 'YELLOW'
+                            ? 'rgba(245, 158, 11, 0.15)'
+                            : 'rgba(16, 185, 129, 0.15)',
+                      borderColor: BAND_COLORS[item.band] || colors.brand,
+                    },
+                  ]}
+                >
+                  <AppText variant="small" weight="bold" color={BAND_COLORS[item.band] || colors.brand}>
+                    {BAND_LABELS[item.band] || item.status || (lang === 'hi' ? 'सामान्य' : 'Normal')}
                   </AppText>
                 </View>
               </View>
@@ -335,7 +532,7 @@ const s = StyleSheet.create({
     padding: space.xs,
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
+  pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
   track: { height: 5, borderRadius: 3, backgroundColor: colors.surfaceHigh, marginTop: 10, overflow: 'hidden' },
   trackFill: { height: 5, borderRadius: 3 },
   newsBadge: {
