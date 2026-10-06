@@ -13,10 +13,14 @@ import { useApp } from '../context/AppContext';
 export default function CaregiverSosScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { t } = useApp();
+  const { t, lang, userName } = useApp();
   const channel = route.params?.channel || 'emergency-live';
   const [joined, setJoined] = useState(false);
   const [incident, setIncident] = useState<IncidentSnapshot | null>(null);
+
+  // Caregiver's own identity for the ack — the caregiver's saved name, not a
+  // hardcoded persona. (On the caregiver's device the app runs as them.)
+  const selfName = userName || (lang === 'hi' ? 'केयरगिवर' : 'Caregiver');
 
   useEffect(() => {
     let mounted = true;
@@ -38,7 +42,7 @@ export default function CaregiverSosScreen() {
 
   const handleJoin = async () => {
     try {
-      await ackEmergency(channel, 'रमेश');
+      await ackEmergency(channel, selfName);
       setJoined(true);
     } catch {
       setJoined(true);
@@ -53,6 +57,9 @@ export default function CaregiverSosScreen() {
   };
 
   const sbar = incident?.sbar_brief;
+  const attempts = incident?.attempts || [];
+  const emsNotified = attempts.some((a) => a.kind === 'ambulance' && a.delivered);
+  const caregiverAlerted = attempts.some((a) => a.kind === 'caregiver' && a.delivered);
   return (
     <Screen bg={colors.bg}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: space.xl, gap: space.sm }}>
@@ -106,34 +113,61 @@ export default function CaregiverSosScreen() {
         <Card doubleBezel>
           <AppText variant="label" weight="bold" color={colors.white}>{t('csos_ambulance')}</AppText>
           <View style={s.row}>
-            <AppText variant="body" color={colors.textMuted}>{t('csos_dispatched')}</AppText>
+            <AppText variant="body" color={colors.textMuted}>
+              {emsNotified ? t('csos_dispatched') : lang === 'hi' ? 'अलर्ट भेजा जा रहा है…' : 'Alerting…'}
+            </AppText>
+            {/* No invented ETA — real dispatch data arrives with the live CAD
+                integration; until then we show the honest dispatch state. */}
             <View style={s.etaBadge}>
-              <AppText variant="small" weight="bold" color={colors.brand}>{t('csos_eta')}</AppText>
+              <AppText variant="small" weight="bold" color={colors.brand}>
+                {emsNotified ? '108' : '…'}
+              </AppText>
             </View>
           </View>
         </Card>
 
+        {/* Vitals only when a live SBAR snapshot actually carried them —
+            no fabricated critical readings. */}
+        {sbar?.assessment && (
         <View style={s.vitals}>
           <Card doubleBezel tint="danger" style={{ flex: 1 }}>
             <AppText variant="small" color={colors.textMuted} weight="bold">{t('csos_bp')}</AppText>
-            <AppText variant="number" weight="bold" color={colors.dangerBright} style={{ marginTop: 4 }}>158/96</AppText>
+            <AppText variant="number" weight="bold" color={colors.dangerBright} style={{ marginTop: 4 }}>
+              {sbar.assessment.split(/(\d{2,3}\/\d{2,3})/).filter((p: string) => /\d/.test(p))[0] || '—'}
+            </AppText>
             <AppText variant="small" color={colors.dangerBright}>{t('csos_high')}</AppText>
           </Card>
           <Card doubleBezel tint="emerald" style={{ flex: 1 }}>
             <AppText variant="small" color={colors.textMuted} weight="bold">{t('csos_pulse')}</AppText>
-            <AppText variant="number" weight="bold" color={colors.white} style={{ marginTop: 4 }}>104</AppText>
-            <AppText variant="small" color={colors.brand}>bpm · {t('vitals_normal')}</AppText>
+            <AppText variant="number" weight="bold" color={colors.white} style={{ marginTop: 4 }}>
+              {sbar.assessment.match(/(\d{2,3})\s*(?:bpm|धड़कन)/)?.[1] || '—'}
+            </AppText>
+            <AppText variant="small" color={colors.brand}>bpm</AppText>
           </Card>
         </View>
+        )}
 
         <Card doubleBezel tint="cyan">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             <Icon name="mic" set="feather" size={14} color={colors.brandSecondary} />
             <AppText variant="small" weight="bold" color={colors.brandSecondary}>{t('csos_live_audio')}</AppText>
           </View>
-          <AppText variant="body" color={colors.white} style={{ marginTop: 4 }}>{t('csos_line1')}</AppText>
-          <AppText variant="body" weight="semibold" color={colors.brandSecondary} style={{ marginTop: 2 }}>{t('csos_line2')}</AppText>
-          <AppText variant="small" color={colors.textMuted} style={{ marginTop: 6 }}>{t('csos_doctor_joining')}</AppText>
+          {/* Live transcript lines — only shown when a real dispatch carried
+              transcript text. No scripted demo dialogue, no invented doctor. */}
+          {(incident?.reason || caregiverAlerted) && (
+            <AppText variant="body" color={colors.white} style={{ marginTop: 4 }}>
+              {incident?.reason || t('csos_default_reason')}
+            </AppText>
+          )}
+          {joined ? (
+            <AppText variant="body" weight="semibold" color={colors.brandSecondary} style={{ marginTop: 2 }}>
+              {t('csos_joined_sub')}
+            </AppText>
+          ) : (
+            <AppText variant="small" color={colors.textMuted} style={{ marginTop: 6 }}>
+              {t('csos_join_sub')}
+            </AppText>
+          )}
         </Card>
 
         <Button label={t('csos_resolve')} variant="outline" big onPress={handleResolve} />

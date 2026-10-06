@@ -59,18 +59,19 @@ function speakWithDeviceTts(text: string, lang: string, cb?: VoiceCallbacks) {
   }
 }
 
+// Active streaming speaker (sentence-by-sentence playback for live replies) —
+// tracked module-level so a global stopNaturalVoice() always silences it too.
+let activeStreamingSpeaker: { stop(): void } | null = null;
+
 export function stopNaturalVoice() {
   speechGeneration += 1;
+  if (activeStreamingSpeaker) {
+    const speaker = activeStreamingSpeaker;
+    activeStreamingSpeaker = null;
+    speaker.stop();
+  }
   const player = currentPlayer;
   currentPlayer = null;
-  if (player) {
-    try {
-      player.pause?.();
-    } catch {}
-    try {
-      player.release?.();
-    } catch {}
-  }
   try {
     Speech.stop();
   } catch {}
@@ -299,8 +300,15 @@ async function playNativeAudio(
  * Speak `text` with the natural Murf voice via the backend.
  * Falls back to device TTS only when the server call or playback genuinely
  * fails — each failure is logged with the exact error.
+ * `opts.noStop` skips the global stop (used by the stream player for its own
+ * clips, so advancing clips doesn't cancel itself).
  */
-export async function speakNatural(text: string, lang: string = 'hi', cb?: VoiceCallbacks) {
+export async function speakNatural(
+  text: string,
+  lang: string = 'hi',
+  cb?: VoiceCallbacks,
+  opts?: { noStop?: boolean },
+) {
   const trimmed = (text || '').trim();
   if (!trimmed) {
     cb?.onError?.();
@@ -312,33 +320,36 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
     unlockWebAudio();
   }
 
-  stopNaturalVoice();
+  if (!opts?.noStop) {
+    stopNaturalVoice();
+  }
   const gen = speechGeneration;
 
   let audioUrl: string | null = null;
   let audioLengthSec = 0;
   try {
-    let res: Response;
-    try {
-      res = await fetch(`${API_BASE_URL}/api/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, lang }),
-      });
-      if (!res.ok) throw new Error(`primary tts error ${res.status}`);
-    } catch (primaryErr) {
-      // Automatic fallback: try secondary backend URL (Render if local, or localhost if remote)
-      const fallbackUrl = API_BASE_URL.includes('localhost')
-        ? 'https://sahara-sh0i.onrender.com/api/tts'
-        : 'http://localhost:8000/api/tts';
-      res = await fetch(fallbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, lang }),
-      });
-      if (!res.ok) throw primaryErr;
+    // One retry on the SAME backend — a transient 5xx/network blip gets a
+    // second chance. The old localhost fallback was unreachable from deployed
+    // sites (netlify → http://localhost is dead by construction) and only
+    // burned seconds before the robotic device-TTS fallback kicked in.
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 2 && !res; attempt += 1) {
+      try {
+        res = await fetch(`${API_BASE_URL}/api/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: trimmed, lang }),
+        });
+        if (!res.ok) {
+          res = null;
+          throw new Error(`tts error ${res === null ? 'no-response' : ''}`);
+        }
+      } catch (err) {
+        if (attempt === 1) throw err;
+      }
     }
 
+    if (!res) throw new Error('no response from tts');
     if (gen !== speechGeneration) return;
     const data = await res.json();
     audioUrl = data?.audio_url || data?.audioFile || null;
@@ -356,4 +367,161 @@ export async function speakNatural(text: string, lang: string = 'hi', cb?: Voice
     return;
   }
   await playNativeAudio(audioUrl, audioLengthSec, trimmed, lang, gen, cb);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming speaker — for live LLM replies.
+// Text is synthesized + played sentence by sentence: the first sentence's
+// audio starts while later sentences are still being generated, so the
+// perceived gap between "answer ready" and "answer heard" collapses from
+// full-text-synthesis-time to first-sentence-synthesis-time.
+// ---------------------------------------------------------------------------
+
+/** Split a full reply into speakable chunks (sentence-ish, Hindi-aware). */
+function splitIntoSpeakableChunks(text: string): string[] {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  // Split on danda (।), period, question mark, or newline — the standard Hindi
+  // punctuation set — keeping the delimiter attached.
+  const parts = clean.split(/(?<=[।.?!\n])/);
+  const chunks: string[] = [];
+  let buffer = '';
+  for (const part of parts) {
+    const piece = part.trim();
+    if (!piece) continue;
+    buffer += (buffer ? ' ' : '') + piece;
+    // Speak at sentence boundaries, but also flush mid-sentence every ~90
+    // chars so a long sentence still starts playing before it fully arrives.
+    if (buffer.length >= 12 || /[।.?!]$/.test(buffer)) {
+      chunks.push(buffer);
+      buffer = '';
+    }
+  }
+  if (buffer) chunks.push(buffer);
+  return chunks;
+}
+
+export interface SpeakStreamCallbacks {
+  /** Called each time a new chunk starts playing (drives live captions). */
+  onChunk?: (chunkIndex: number, chunkText: string) => void;
+  onDone?: (fullText: string) => void;
+  onError?: () => void;
+}
+
+/**
+ * Incremental natural-voice playback: `pushText` feeds text as it streams in;
+ * complete sentences are fetched from Murf and queued for playback in order.
+ * Call `stop()` to cancel (also triggered by the global stopNaturalVoice()).
+ */
+export function speakNaturalStream(lang: string, cb: SpeakStreamCallbacks) {
+  stopNaturalVoice();
+
+  const chunks: string[] = [];
+  let closed = false;
+  let finishedAll = false;
+  let generation = speechGeneration;
+
+  const emitChunk = (idx: number, text: string) => {
+    if (generation === speechGeneration) cb.onChunk?.(idx, text);
+  };
+
+  /** Play one Murf-synthesized clip; resolves when it finishes (or fails). */
+  const playClip = (idx: number, text: string): Promise<void> =>
+    new Promise((resolve) => {
+      if (generation !== speechGeneration) {
+        resolve();
+        return;
+      }
+      emitChunk(idx, text);
+      speakNatural(
+        text,
+        lang,
+        {
+          onDone: () => resolve(),
+          onError: () => resolve(),
+        },
+        { noStop: true },
+      );
+    });
+
+  const runQueue = async () => {
+    let next = 0;
+    while (generation === speechGeneration) {
+      if (next < chunks.length) {
+        const idx = next;
+        next += 1;
+        await playClip(idx, chunks[idx]);
+        // If more text may still arrive and we're out of queued chunks, wait
+        // briefly for the next push before deciding we're finished.
+        if (!closed && next >= chunks.length) {
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      } else if (closed) {
+        break;
+      } else {
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    }
+    if (generation === speechGeneration && closed && next >= chunks.length) {
+      finishedAll = true;
+      if (activeStreamingSpeaker === (speakerRef as any)) {
+        activeStreamingSpeaker = null;
+      }
+      cb.onDone?.(chunks.join(' '));
+    }
+  };
+
+  // Pending incomplete-sentence tail (module fn scope) — declared before the
+  // speaker object so its closures see the binding.
+  let _pending = '';
+
+  // Identity ref: runQueue and playClip check which speaker is live.
+  const speakerRef: any = {};
+
+  const speaker = {
+    /** Feed streamed text; sentence-complete pieces are queued for playback. */
+    pushText(delta: string) {
+      if (generation !== speechGeneration) return;
+      // Accumulate into the last partial chunk; only queue sentence-complete
+      // boundaries.
+      _pending += delta;
+      const ready = splitIntoSpeakableChunks(_pending);
+      if (ready.length === 0) return;
+      // The final element may be an incomplete sentence — keep it pending.
+      const lastPiece = ready[ready.length - 1];
+      const complete = ready.slice(0, ready.length - 1);
+      for (const piece of complete) chunks.push(piece);
+      _pending = lastPiece;
+    },
+    /** Mark the text stream complete; flush the pending tail and finish. */
+    close() {
+      if (closed) return;
+      closed = true;
+      const tail = _pending.trim();
+      if (tail) {
+        chunks.push(tail);
+        _pending = '';
+      }
+    },
+    stop() {
+      generation = -1; // invalidate this speaker against future stop calls
+      closed = true;
+      chunks.length = 0;
+      _pending = '';
+    },
+  };
+
+  if (activeStreamingSpeaker && activeStreamingSpeaker !== speakerRef) {
+    activeStreamingSpeaker.stop();
+  }
+  activeStreamingSpeaker = speakerRef;
+  // runQueue closes over speakerRef (not the literal) so identity checks hold.
+  speakerRef.stop = speaker.stop;
+  speakerRef.pushText = speaker.pushText;
+  speakerRef.close = speaker.close;
+  runQueue().catch(() => {
+    if (generation === speechGeneration) cb.onError?.();
+  });
+
+  return speaker;
 }

@@ -38,14 +38,14 @@ import {
   ReminderCard,
 } from '../components/chat/ToolCards';
 import { useAgoraVoice } from '../services/voice';
-import { triggerEmergency } from '../services/api';
+import { triggerEmergency, checkBackendHealth } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { colors, radius, sans } from '../theme';
 
 export default function TalkScreen() {
   const nav = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const { lang, tf, t, userName } = useApp();
+  const { lang, tf, t, userName, caregiverPhone } = useApp();
   const { width } = useWindowDimensions();
 
   const {
@@ -101,17 +101,46 @@ export default function TalkScreen() {
   const dictationPulse = useRef(new Animated.Value(1)).current;
   // Live mic level from local capture — feeds the orb when no RTC metering exists
   const [captureLevel, setCaptureLevel] = useState(0);
+  // Backend reachability (null = still probing) — drives the header dot.
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
   const isThinking = state === 'thinking';
   const isSpeaking = state === 'speaking';
   const isActive = state !== 'idle';
   const hasMessages = messages.length > 0;
 
+  // One-word state labels (Hindi-primary with English fallback) — the clear
+  // listening/thinking/speaking indicator for the live voice call.
+  const stateLabel =
+    state === 'connecting'
+      ? { word: lang === 'hi' ? 'जुड़ रहा…' : 'Connecting', color: '#FBBF24' }
+      : state === 'listening'
+      ? { word: lang === 'hi' ? 'सुन…' : 'Listen', color: '#34D399' }
+      : state === 'thinking'
+      ? { word: lang === 'hi' ? 'सोच…' : 'Think', color: '#F59E0B' }
+      : state === 'speaking'
+      ? { word: lang === 'hi' ? 'बोल…' : 'Speak', color: '#38BDF8' }
+      : state === 'emergency'
+      ? { word: lang === 'hi' ? 'आपातकाल' : 'SOS', color: colors.danger }
+      : null;
+
   // Safe area top padding so header never overlaps Android notification bar
   const headerTopPad = Math.max(
     insets.top,
     Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 0,
   );
+
+  // Probe the backend once on mount (and re-check on app foreground later if
+  // needed) so degraded mode is always visible, never silent.
+  useEffect(() => {
+    let mounted = true;
+    checkBackendHealth().then((ok) => {
+      if (mounted) setBackendOnline(ok);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Orb sizes: big while idle/home, smaller once the transcript starts.
   const orbBig = Math.max(150, Math.min(width * 0.62, 250));
@@ -124,6 +153,10 @@ export default function TalkScreen() {
   }, [messages, pushedCard, state, hasMessages]);
 
   // --- Real speech-to-text dictation (backend Whisper on native, browser SR on web) ---
+  // Ref indirection so commitVoiceTurn can call dictation.cancel() even though
+  // useDictation is declared below (its result callback closes over this ref).
+  const dictationRef = useRef<any>(null);
+
   const commitVoiceTurn = useCallback(() => {
     if (silenceTimer.current) {
       clearTimeout(silenceTimer.current);
@@ -133,13 +166,19 @@ export default function TalkScreen() {
     voiceTurnRef.current = false;
     voiceTurnLiveRef.current = false;
     const spoken = inputTextRef.current.trim();
+    // Stop the live recognition BEFORE sending — the web loop previously left
+    // the SpeechRecognition session running, so the auto-listen effect never
+    // re-armed (it waits for phase === 'idle') and turn 2 heard nothing.
+    dictationRef.current?.cancel?.();
+    inputTextRef.current = '';
     setInputText('');
     if (spoken) sendVoiceQuery(spoken, lang);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, sendVoiceQuery]);
 
   const showDictationResult = useCallback((text: string, isLive: boolean) => {
-    // Voice-turn capture: preview the transcript, then auto-commit.
+    // Voice-turn capture: preview the transcript in the composer while the
+    // caller speaks — this doubles as the "live caption" of the user's turn.
     if (voiceTurnRef.current) {
       inputTextRef.current = text;
       setInputText(text);
@@ -177,6 +216,7 @@ export default function TalkScreen() {
   }, [commitVoiceTurn]);
 
   const dictation = useDictation(lang, showDictationResult, { onLevel: setCaptureLevel });
+  dictationRef.current = dictation;
   const isDictating = dictation.phase !== 'idle';
   const effectiveAudioLevel = Math.max(audioLevel, isDictating ? captureLevel : 0);
 
@@ -198,9 +238,12 @@ export default function TalkScreen() {
   // Auto-listen in voice-loop mode: whenever Sahara finishes speaking, start
   // capturing the caller's next turn automatically (hands-free duplex-lite).
   // The composer-mic mute acts as the kill-switch: muted → no auto-capture.
+  // Re-arms on every dictation-phase drop to 'idle' (commit now cancels the
+  // recognition session, so the next turn gets a fresh session).
   useEffect(() => {
     if (!isVoiceLoop || state !== 'listening' || muted) return;
     if (dictation.phase !== 'idle') return;
+    if (dictation.error) return;
     const id = setTimeout(() => {
       if (typingRef.current) {
         clearInterval(typingRef.current);
@@ -213,7 +256,7 @@ export default function TalkScreen() {
     }, 500);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVoiceLoop, state, muted, dictation.phase]);
+  }, [isVoiceLoop, state, muted, dictation.phase, dictation.error]);
 
   // Mic muted (or call ended) → cancel any active voice-turn capture.
   useEffect(() => {
@@ -256,10 +299,18 @@ export default function TalkScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, muted, dictationPulse]);
 
+  // SOS: dispatches with the saved profile (name + caregiver phone) so the
+  // WhatsApp alert reaches the real family member, not a placeholder.
   const handleSOS = () => {
     const ch = channelName || `emergency-${Date.now()}`;
-    triggerEmergency(ch, 'मरीज़ ने सहायता के लिए SOS बटन दबाया').catch(() => {});
-    nav.navigate('Emergency', { channel: ch });
+    const sosPatient = userName || 'मरीज़';
+    triggerEmergency(
+      ch,
+      lang === 'hi' ? 'मरीज़ ने सहायता के लिए SOS बटन दबाया' : 'Patient pressed the SOS button for help',
+      sosPatient,
+      caregiverPhone || undefined,
+    ).catch((e) => console.warn('[sos] dispatch error:', e));
+    nav.navigate('Emergency', { channel: ch, patient: sosPatient });
   };
 
   const handleSendText = (textToSend?: string) => {
@@ -451,6 +502,22 @@ export default function TalkScreen() {
           <Icon name="menu" set="feather" size={20} color={colors.text} />
         </Pressable>
 
+        {/* Backend reachability: green = live, amber = unreachable (honest
+            degraded mode, so mock-mode can never masquerade as a live demo) */}
+        <View
+          style={s.connDot}
+          accessibilityLabel={backendOnline === null ? 'checking connection' : backendOnline ? 'server connected' : 'server unreachable'}
+        >
+          <View
+            style={[
+              s.connDotInner,
+              {
+                backgroundColor: backendOnline === null ? '#64748B' : backendOnline ? '#34D399' : '#F59E0B',
+              },
+            ]}
+          />
+        </View>
+
         <View style={{ flex: 1 }} />
 
         <PressableScale style={s.sosPill} onPress={handleSOS} accessibilityLabel="Emergency SOS">
@@ -484,6 +551,9 @@ export default function TalkScreen() {
                 !isUser &&
                 idx ===
                   messages.map((item, i) => (item.sender === 'agent' ? i : -1)).filter((i) => i !== -1).pop();
+              // Live caption state: the latest agent bubble while the reply is
+              // still streaming in (thinking/speaking) and text is growing.
+              const isStreamingAgent = isLatestAgent && (state === 'thinking' || state === 'speaking') && isActive;
 
               if (isUser) {
                 return (
@@ -499,9 +569,16 @@ export default function TalkScreen() {
 
               return (
                 <FadeInView key={m.id} style={s.assistantBlock}>
-                  <AppText variant="body" color={colors.text} style={{ fontSize: 20, lineHeight: 29 }}>
-                    {m.text}
-                  </AppText>
+                  {m.text ? (
+                    <AppText variant="body" color={colors.text} style={{ fontSize: 20, lineHeight: 29 }}>
+                      {m.text}
+                      {isStreamingAgent && <AppText color="#38BDF8">▍</AppText>}
+                    </AppText>
+                  ) : isStreamingAgent ? (
+                    <AppText variant="body" color={colors.textMuted} style={{ fontSize: 20, lineHeight: 29 }}>
+                      {lang === 'hi' ? 'सोच…' : 'Thinking'}
+                    </AppText>
+                  ) : null}
 
                   {(() => {
                     const cardToShow = m.card || (isLatestAgent ? pushedCard : null);
@@ -649,31 +726,31 @@ export default function TalkScreen() {
               >
                 {isSpeaking
                   ? lang === 'hi'
-                    ? 'सहारा बोल रहा है...'
-                    : 'Sahara is speaking...'
+                    ? 'बोल…'
+                    : 'Speaking'
                   : isThinking
                   ? lang === 'hi'
-                    ? 'सोच रहा हूँ...'
-                    : 'Thinking...'
+                    ? 'सोच…'
+                    : 'Thinking'
                   : muted
                   ? lang === 'hi'
-                    ? 'माइक बंद है · चालू करने के लिए माइक दबाएँ'
-                    : 'Mic is off · tap the mic to unmute'
+                    ? 'माइक बंद · माइक दबाएँ'
+                    : 'Mic off · tap mic'
                   : isActive
                   ? isVoiceLoop
                     ? lang === 'hi'
-                      ? 'सुन रहा हूँ… बोलिए'
-                      : 'Listening… speak now'
+                      ? 'सुन… बोलिए'
+                      : 'Listening… speak'
                     : Platform.OS !== 'web'
                     ? lang === 'hi'
-                      ? 'कॉल चालू है · बोलिए'
-                      : 'Call is live · speak now'
+                      ? 'कॉल चालू · बोलिए'
+                      : 'Live · speak'
                     : lang === 'hi'
-                    ? 'आपकी बात सुनी जा रही है...'
-                    : 'Listening to you...'
+                    ? 'सुन…'
+                    : 'Listening'
                   : lang === 'hi'
-                  ? 'सहारा तैयार है · बोलकर कुछ भी पूछें'
-                  : 'Sahara is ready · Speak naturally'}
+                  ? 'सहारा तैयार · बोलकर पूछें'
+                  : 'Sahara ready · speak naturally'}
               </AppText>
             </View>
 
@@ -717,8 +794,25 @@ export default function TalkScreen() {
           </View>
         )}
 
-        {/* Orb dock — tap to connect or disconnect voice call */}
-        {hasMessages && <View style={s.orbDock}>{orb(orbDock)}</View>}
+        {/* Orb dock + one-word state pill — always visible during a call */}
+        {hasMessages && (
+          <View style={s.callStatusRow}>
+            {stateLabel && (
+              <View style={[s.statePill, { borderColor: stateLabel.color + '55' }]}>
+                <View style={[s.statePillDot, { backgroundColor: stateLabel.color }]} />
+                <AppText variant="small" weight="bold" color={stateLabel.color}>
+                  {stateLabel.word}
+                </AppText>
+                {isDictating && (
+                  <AppText variant="small" color={stateLabel.color} style={{ opacity: 0.75, fontSize: 11 }}>
+                    {lang === 'hi' ? '· आप बोल रहे हैं' : '· you speak'}
+                  </AppText>
+                )}
+              </View>
+            )}
+            <View style={s.orbDock}>{orb(orbDock)}</View>
+          </View>
+        )}
 
         {/* Attached Document Preview Chip — ChatGPT Style */}
         {attachedDoc && (
@@ -944,6 +1038,17 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  connDot: {
+    width: 18,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connDotInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   sosPill: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -1015,6 +1120,28 @@ const s = StyleSheet.create({
     borderColor: 'rgba(16, 185, 129, 0.3)',
   },
   orbDock: { alignItems: 'center', paddingBottom: 6 },
+  callStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 6,
+  },
+  statePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+  },
+  statePillDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
   attachedChipRow: {
     paddingHorizontal: 16,
     paddingBottom: 4,

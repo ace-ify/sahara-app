@@ -447,14 +447,16 @@ export async function escalateCaregiver(
       body: JSON.stringify({ reason, urgency }),
     });
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[escalate] server unreachable:', err);
+  }
   return {
-    status: 'success',
-    caregiver: 'केयरगिवर',
+    status: OFFLINE_STATUS,
+    caregiver: '',
     phone: '',
     reason,
     urgency,
-    message_hi: 'केयरगिवर को सूचना भेज दी गई है।',
+    message_hi: 'कनेक्शन नहीं — केयरगिवर को सूचना नहीं भेजी जा सकी।',
   };
 }
 
@@ -480,46 +482,15 @@ export async function getVitalsHistory(vitalType: string = 'all'): Promise<{
       const data = await res.json();
       if (data && data.history && data.history.length > 0) return data;
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[vitals] history unreachable:', err);
+  }
+  // Honest offline state — no fabricated readings.
   return {
-    status: 'success',
-    count: 4,
-    trend_summary: 'रक्तचाप और नाड़ी सामान्य स्तर पर स्थिर हैं।',
-    history: [
-      {
-        id: 'vit-1',
-        type: 'रक्तचाप (BP)',
-        value: '124/82',
-        unit: 'mmHg',
-        timestamp: 'आज, सुबह 8:15 AM',
-        status: 'सामान्य (Optimal)',
-      },
-      {
-        id: 'vit-2',
-        type: 'धड़कन (Heart Rate)',
-        value: '72',
-        unit: 'bpm',
-        timestamp: 'आज, सुबह 8:15 AM',
-        status: 'सामान्य (Normal)',
-      },
-      {
-        id: 'vit-3',
-        type: 'ऑक्सीजन (SpO2)',
-        value: '98',
-        unit: '%',
-        timestamp: 'आज, सुबह 8:16 AM',
-        status: 'उत्कृष्ट (Healthy)',
-      },
-      {
-        id: 'vit-4',
-        type: 'ब्लड शुगर (Fasting)',
-        value: '108',
-        unit: 'mg/dL',
-        timestamp: 'कल, सुबह 7:45 AM',
-        status: 'नियंत्रित (Controlled)',
-      },
-    ],
-    message_hi: 'हालिया वाइटल्स रिकॉर्ड सामान्य और स्थिर हैं।',
+    status: OFFLINE_STATUS,
+    count: 0,
+    history: [],
+    message_hi: 'कनेक्शन नहीं — रीडिंग उपलब्ध नहीं।',
   };
 }
 
@@ -532,12 +503,14 @@ export async function getReminders(): Promise<{
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/reminders`);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[reminders] server unreachable:', err);
+  }
   return {
-    status: 'success',
+    status: OFFLINE_STATUS,
     count: 0,
     reminders: [],
-    message_hi: 'कोई सक्रिय रिमाइंडर नहीं है।',
+    message_hi: 'कनेक्शन नहीं — रिमाइंडर उपलब्ध नहीं।',
   };
 }
 
@@ -553,14 +526,21 @@ export async function setReminder(title: string, time: string = 'समय प�
       body: JSON.stringify({ title, time, recurring }),
     });
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[reminders] set unreachable:', err);
+  }
   return {
-    status: 'success',
-    message_hi: `रिमाइंडर '${title}' सेट कर दिया गया है।`,
+    status: OFFLINE_STATUS,
+    message_hi: `कनेक्शन नहीं — रिमाइंडर '${title}' सेट नहीं हो सका।`,
   };
 }
 
 // --- LLM Chat & Voice Turn Endpoint ---
+
+export interface StreamChatHandlers {
+  /** Called for each streamed text delta as it arrives (live captions). */
+  onDelta?: (delta: string) => void;
+}
 
 export async function sendChatMessage(
   text: string,
@@ -568,7 +548,11 @@ export async function sendChatMessage(
   lang: string = 'hi',
   history: Array<{ role: string; content: string }> = [],
   profile?: { patient?: string; caregiverPhone?: string },
+  streamHandlers?: StreamChatHandlers,
 ): Promise<{ text: string; card?: any }> {
+  // SSE reading needs response-body streaming (ReadableStream.getReader) —
+  // available in browsers, not on RN/Hermes fetch. Native gets the JSON path.
+  const doStream = Platform.OS === 'web' && Boolean(streamHandlers?.onDelta);
   try {
     const res = await fetchWithTimeout(
       `${getBackendBaseUrl()}/llm/chat/completions?channel=${encodeURIComponent(channel)}&lang=${encodeURIComponent(lang)}`,
@@ -581,7 +565,7 @@ export async function sendChatMessage(
         body: JSON.stringify({
           // Full conversation context so the LLM retains memory across turns.
           messages: [...history, { role: 'user', content: text }],
-          stream: false,
+          stream: doStream,
           lang,
           // Profile context so a voice-detected emergency dispatches to the
           // real caregiver instead of a server-side placeholder contact.
@@ -589,12 +573,56 @@ export async function sendChatMessage(
           caregiver_phone: profile?.caregiverPhone || undefined,
         }),
       },
-      20000,
+      // Streamed replies are already rendering to screen as they arrive; give
+      // the network a generous ceiling rather than killing a healthy stream.
+      doStream ? 60000 : 20000,
     );
     if (res.ok) {
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || '';
-      return { text: reply, card: data.card || null };
+      if (!doStream) {
+        const data = await res.json();
+        const reply = data.choices?.[0]?.message?.content || '';
+        return { text: reply, card: data.card || null };
+      }
+      // SSE stream: accumulate deltas (driving live captions) and return the
+      // full text. Card pushes ride the normal /api/card/latest poller.
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('no stream body');
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+      let full = '';
+      let card: any = null;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          // SSE events are separated by a blank line; process complete ones.
+          const events = sseBuffer.split('\n\n');
+          sseBuffer = events.pop() || '';
+          for (const ev of events) {
+            for (const line of ev.split('\n')) {
+              if (!line.startsWith('data:')) continue;
+              const payload = line.slice(5).trim();
+              if (!payload || payload === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(payload);
+                const delta = parsed?.choices?.[0]?.delta?.content;
+                if (delta) {
+                  full += delta;
+                  streamHandlers?.onDelta?.(delta);
+                }
+                // Some gateways attach a non-stream card to the terminal chunk.
+                if (parsed?.card) card = parsed.card;
+              } catch {}
+            }
+          }
+        }
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch {}
+      }
+      return { text: full, card };
     }
   } catch (e) {
     console.warn('sendChatMessage network error:', e);
@@ -670,25 +698,19 @@ export async function triggerEmergency(
 }
 
 export async function getEmergencyStatus(channel: string): Promise<{
-  status: 'active' | 'none';
+  status: 'active' | 'none' | 'offline';
   incident?: IncidentSnapshot;
 }> {
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/emergency/status?channel=${encodeURIComponent(channel)}`, {}, 2000);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] status unreachable:', err);
+  }
 
-  return {
-    status: 'active',
-    incident: {
-      channel,
-      reason: 'आपातकालीन सहायता अनुरोध',
-      severity: 'critical',
-      patient: 'मरीज़ (रामपुर)',
-      status: 'dispatching',
-      attempts: [{ seq: 0, contact: 'रमेश (बेटा)', kind: 'caregiver', delivered: true, ts: Date.now() }],
-    },
-  };
+  // Offline: honestly report no server knowledge — never fabricate an active
+  // incident with fake "delivered" attempts.
+  return { status: 'offline' };
 }
 
 export async function ackEmergency(
@@ -702,16 +724,18 @@ export async function ackEmergency(
       body: JSON.stringify({ channel, by }),
     }, 2000);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] ack unreachable:', err);
+  }
 
   return {
-    status: 'acknowledged',
+    status: OFFLINE_STATUS,
     incident: {
       channel,
       reason: 'आपातकाल',
       severity: 'critical',
       patient: 'मरीज़',
-      status: 'acknowledged',
+      status: 'dispatching',
       acked_by: by,
       attempts: [],
     },
@@ -733,10 +757,12 @@ export async function resolveEmergency(
       body: JSON.stringify({ channel, by, note }),
     }, 2500);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] resolve unreachable:', err);
+  }
 
   return {
-    status: 'resolved',
+    status: OFFLINE_STATUS,
     incident: {
       channel,
       reason: 'सुलझ गया',
@@ -759,8 +785,11 @@ export async function sendServerWhatsApp(
       body: JSON.stringify({ message, to }),
     }, 4000);
     if (res.ok) return await res.json();
-  } catch {}
-  return { status: 'delivered', simulated: true, message_id: `wamid.local_${Date.now()}` };
+  } catch (err) {
+    console.warn('[whatsapp] send unreachable:', err);
+  }
+  // Offline: clearly NOT delivered — callers can surface this honestly.
+  return { status: 'failed', simulated: true };
 }
 
 export async function updateAvpu(
@@ -775,10 +804,12 @@ export async function updateAvpu(
       body: JSON.stringify({ channel, avpu_state, note }),
     }, 2000);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] avpu unreachable:', err);
+  }
 
   return {
-    status: 'updated',
+    status: OFFLINE_STATUS,
     incident: {
       channel,
       reason: 'आपातकाल',
@@ -799,19 +830,14 @@ export async function getEmergencySbar(channel: string): Promise<{
   try {
     const res = await fetchWithTimeout(`${getBackendBaseUrl()}/api/emergency/sbar?channel=${encodeURIComponent(channel)}`, {}, 2000);
     if (res.ok) return await res.json();
-  } catch {}
+  } catch (err) {
+    console.warn('[emergency] sbar unreachable:', err);
+  }
 
   return {
-    status: 'default',
+    status: OFFLINE_STATUS,
     channel,
-    sbar: {
-      situation: 'आपातकालीन स्वास्थ्य सहायता सक्रिय',
-      background: 'नियमित दवा: Amlodipine 5mg',
-      assessment: 'NEWS2 क्रिटिकल बैंड (RED PATH)',
-      recommendation: '108 ALS एम्बुलेंस परिवहन',
-      verbal_handoff: 'SBAR Brief: Patient in acute distress. 108 EMS dispatched.',
-      band: 'RED',
-    },
+    sbar: null,
   };
 }
 

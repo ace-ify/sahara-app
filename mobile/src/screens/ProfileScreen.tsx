@@ -26,6 +26,9 @@ export default function ProfileScreen() {
     consentDoctorShare,
     setConsentDoctorShare,
     t,
+    userName,
+    caregiverPhone,
+    resetUserProfile,
   } = useApp();
 
   const sizes = [t('size_normal'), t('size_large'), t('size_xl')];
@@ -42,6 +45,8 @@ export default function ProfileScreen() {
           text: lang === 'hi' ? 'हाँ, सब साफ़ करें' : 'Yes, Wipe All',
           style: 'destructive',
           onPress: async () => {
+            // Clear local profile state instantly, then storage + backend.
+            resetUserProfile();
             try {
               await resetAllData();
               await clearAll();
@@ -62,7 +67,7 @@ export default function ProfileScreen() {
 
   return (
     <Screen title={t('settings_title')} subtitle={t('settings_subtitle')}>
-      {/* 3D Sahara Medical Health ID Card (Reacticx FlipCard) */}
+      {/* 3D Sahara Medical Health ID Card (Reacticx FlipCard) — profile-driven */}
       <FlipCard width={330} height={196} borderRadius={20}>
         <FlipCard.Front style={s.healthCardFront}>
           <FlipCard.Trigger style={{ flex: 1, padding: 16, justifyContent: 'space-between' }}>
@@ -73,49 +78,49 @@ export default function ProfileScreen() {
                 </View>
                 <View>
                   <AppText variant="label" weight="bold" color="#F8FAFC">
-                    सहारा स्वास्थ्य कार्ड (Health Pass)
+                    {lang === 'hi' ? 'सहारा स्वास्थ्य साथी' : 'Sahara Health Companion'}
                   </AppText>
                   <AppText variant="small" color="#94A3B8" style={{ fontSize: 11 }}>
-                    Govt. Ayushman Bharat Linked
+                    {lang === 'hi' ? 'आवाज़-आधारित स्वास्थ्य देखभाल' : 'Voice-first health companion'}
                   </AppText>
                 </View>
               </View>
               <View style={s.vipBadge}>
                 <AppText variant="small" weight="bold" color="#10B981">
-                  वरिष्ठ नागरिक
+                  {lang === 'hi' ? 'सक्रिय' : 'Active'}
                 </AppText>
               </View>
             </View>
 
             <View style={s.cardStatsRow}>
               <View>
-                <AppText variant="small" color="#94A3B8">रक्त समूह (Blood)</AppText>
-                <AppText variant="label" weight="bold" color="#F8FAFC" style={{ fontSize: 17, marginTop: 2 }}>
-                  O+ Positive
+                <AppText variant="small" color="#94A3B8">{lang === 'hi' ? 'नाम' : 'Name'}</AppText>
+                <AppText variant="label" weight="bold" color="#F8FAFC" style={{ fontSize: 16, marginTop: 2 }}>
+                  {userName || (lang === 'hi' ? 'मेहमान उपयोगकर्ता' : 'Guest user')}
                 </AppText>
               </View>
               <View>
-                <AppText variant="small" color="#94A3B8">सुरक्षा स्थिति</AppText>
+                <AppText variant="small" color="#94A3B8">{lang === 'hi' ? 'सुरक्षा स्थिति' : 'Safety Status'}</AppText>
                 <AppText variant="label" weight="bold" color="#10B981" style={{ fontSize: 14, marginTop: 2 }}>
-                  सक्रिय (Active) ✓
+                  {lang === 'hi' ? 'सक्रिय ✓' : 'Active ✓'}
                 </AppText>
               </View>
               <View>
-                <AppText variant="small" color="#94A3B8">आयु (Age)</AppText>
-                <AppText variant="label" weight="bold" color="#F8FAFC" style={{ fontSize: 17, marginTop: 2 }}>
-                  68 वर्ष
+                <AppText variant="small" color="#94A3B8">{lang === 'hi' ? 'भाषा' : 'Language'}</AppText>
+                <AppText variant="label" weight="bold" color="#F8FAFC" style={{ fontSize: 16, marginTop: 2 }}>
+                  {lang === 'hi' ? 'हिंदी' : 'English'}
                 </AppText>
               </View>
             </View>
 
             <View style={s.cardBottomHintRow}>
               <AppText variant="small" color="#64748B" style={{ fontSize: 11 }}>
-                ID: SAH-2026-DL9921
+                {lang === 'hi' ? 'डेटा फ़ोन में सुरक्षित' : 'Data stays on your phone'}
               </AppText>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Icon name="rotate-cw" set="feather" size={12} color="#38BDF8" />
                 <AppText variant="small" color="#38BDF8" weight="bold" style={{ fontSize: 11 }}>
-                  पीछे पलटें (Tap to Flip)
+                  {lang === 'hi' ? 'पीछे पलटें' : 'Tap to Flip'}
                 </AppText>
               </View>
             </View>
@@ -128,7 +133,7 @@ export default function ProfileScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Icon name="alert-circle" set="feather" size={18} color="#EF4444" />
                 <AppText variant="label" weight="bold" color="#EF4444">
-                  आपातकालीन संपर्क विवरण
+                  {lang === 'hi' ? 'आपातकालीन संपर्क विवरण' : 'Emergency Contact'}
                 </AppText>
               </View>
               <View style={s.sosBadge}>
@@ -140,24 +145,31 @@ export default function ProfileScreen() {
 
             <View style={{ gap: 4, marginVertical: 4 }}>
               <AppText variant="small" color="#E2E8F0">
-                • नज़दीकी अस्पताल: <AppText variant="small" weight="bold" color="#38BDF8">AIIMS New Delhi</AppText>
+                • {lang === 'hi' ? 'रोगी' : 'Patient'}:{' '}
+                <AppText variant="small" weight="bold" color="#38BDF8">
+                  {userName || (lang === 'hi' ? 'मेहमान' : 'Guest')}
+                </AppText>
               </AppText>
               <AppText variant="small" color="#E2E8F0">
-                • फैमिली केयरगिवर: <AppText variant="small" weight="bold" color="#10B981">WhatsApp Live Sync</AppText>
+                • {lang === 'hi' ? 'केयरगिवर नंबर' : 'Caregiver number'}:{' '}
+                <AppText variant="small" weight="bold" color="#10B981">
+                  {caregiverPhone || (lang === 'hi' ? 'जोड़ा नहीं गया' : 'Not added')}
+                </AppText>
               </AppText>
               <AppText variant="small" color="#E2E8F0">
-                • आपातकालीन पासकी: <AppText variant="small" weight="bold" color="#F59E0B">482 · 910</AppText>
+                • {lang === 'hi' ? 'आपात नंबर' : 'Emergency line'}:{' '}
+                <AppText variant="small" weight="bold" color="#F59E0B">108</AppText>
               </AppText>
             </View>
 
             <View style={s.cardBottomHintRow}>
               <AppText variant="small" color="#64748B" style={{ fontSize: 11 }}>
-                24x7 इमरजेंसी ब्रेक-ग्लास अधिकृत
+                {lang === 'hi' ? '24x7 इमरजेंसी ब्रेक-ग्लास अधिकृत' : '24x7 emergency break-glass authorized'}
               </AppText>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Icon name="rotate-ccw" set="feather" size={12} color="#10B981" />
                 <AppText variant="small" color="#10B981" weight="bold" style={{ fontSize: 11 }}>
-                  आगे जाएँ (Flip Front)
+                  {lang === 'hi' ? 'आगे जाएँ' : 'Flip Front'}
                 </AppText>
               </View>
             </View>
@@ -334,18 +346,6 @@ export default function ProfileScreen() {
             onPress={handleConfirmReset}
             style={{ marginTop: space.xs }}
           />
-        </View>
-      </Card>
-
-      {/* Demo Screen Links */}
-      <Card>
-        <AppText variant="label" weight="bold">{t('settings_demo_screens')}</AppText>
-        <View style={{ gap: space.sm, marginTop: space.md }}>
-          <Button label={t('demo_onboarding')} sub={t('demo_onboarding_sub')} variant="ghost" onPress={() => nav.navigate('Onboarding')} />
-          <Button label={t('demo_caregiver')} sub={t('demo_caregiver_sub')} variant="ghost" onPress={() => nav.navigate('CaregiverPairing')} />
-          <Button label={t('demo_history')} sub={t('demo_history_sub')} variant="ghost" onPress={() => nav.navigate('CareHistory')} />
-          <Button label={t('demo_emergency')} sub={t('demo_emergency_sub')} variant="ghost" onPress={() => nav.navigate('Emergency')} />
-          <Button label={t('demo_caregiver_sos')} sub={t('demo_caregiver_sos_sub')} variant="ghost" onPress={() => nav.navigate('CaregiverSos')} />
         </View>
       </Card>
     </Screen>

@@ -16,14 +16,17 @@ export default function MedsScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
 
   const fetchMeds = async () => {
     try {
       setLoading(true);
       const res = await getMedications();
       setMeds(res.medications || []);
+      setOffline(res.status === 'offline');
     } catch {
       setMeds([]);
+      setOffline(true);
     } finally {
       setLoading(false);
     }
@@ -51,6 +54,20 @@ export default function MedsScreen() {
 
   return (
     <Screen title={t('meds_title')} subtitle={t('meds_subtitle')}>
+      {/* Offline notice — honest degraded state instead of a blank list */}
+      {offline && (
+        <Card doubleBezel tint="amber" style={s.sectionCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="wifi-off" set="feather" size={18} color="#F59E0B" />
+            <AppText variant="small" color="#F59E0B" style={{ flex: 1 }}>
+              {lang === 'hi'
+                ? 'सर्वर से संपर्क नहीं — दवाओं की सूची उपलब्ध नहीं। कृपया इंटरनेट जाँचें।'
+                : 'Server unreachable — medicine list unavailable. Please check your connection.'}
+            </AppText>
+          </View>
+        </Card>
+      )}
+
       {/* Adherence Card */}
       <Card doubleBezel tint="emerald" style={s.sectionCard}>
         <View style={s.rowBetween}>

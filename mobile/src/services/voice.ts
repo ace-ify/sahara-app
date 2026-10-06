@@ -8,7 +8,7 @@ import {
   clearLatestCard,
   sendChatMessage,
 } from './api';
-import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio } from './tts';
+import { speakNatural, stopNaturalVoice, primeWebAudio, unlockWebAudio, speakNaturalStream } from './tts';
 import { ConvState } from '../components/StateBadge';
 import { Language } from '../context/AppContext';
 import {
@@ -65,6 +65,28 @@ async function getStableVoiceChannel(): Promise<string> {
     return fresh;
   } catch {
     return `sahara-room-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+/**
+ * Profile snapshot (name + caregiver phone from onboarding) sent with each
+ * chat turn so a voice-detected emergency dispatches to the real caregiver
+ * instead of server-side placeholder contacts.
+ */
+const USER_NAME_KEY = 'sahara.userName';
+const CAREGIVER_PHONE_KEY = 'sahara.caregiverPhone';
+async function getProfileContext(): Promise<{ patient?: string; caregiverPhone?: string }> {
+  try {
+    const [name, phone] = await Promise.all([
+      getItem(USER_NAME_KEY),
+      getItem(CAREGIVER_PHONE_KEY),
+    ]);
+    return {
+      patient: name || undefined,
+      caregiverPhone: phone || undefined,
+    };
+  } catch {
+    return {};
   }
 }
 
@@ -527,22 +549,68 @@ export function useAgoraVoice() {
 
     // Snapshot history from the live ref — never a stale closure.
     const history = toHistory(messagesRef.current);
-    const newMsgs: MessageItem[] = [
-      ...messagesRef.current,
-      {
-        id: `user-${Date.now()}`,
-        sender: 'user',
-        text: trimmed,
-        timestamp: String(Date.now()),
-      },
-    ];
-    setMessages(newMsgs);
+    const userMsg: MessageItem = {
+      id: `user-${Date.now()}`,
+      sender: 'user',
+      text: trimmed,
+      timestamp: String(Date.now()),
+    };
+    const agentMsgId = `agent-${Date.now()}`;
+    const agentMsg: MessageItem = {
+      id: agentMsgId,
+      sender: 'agent',
+      text: '',
+      timestamp: String(Date.now()),
+    };
+    setMessages([...messagesRef.current, userMsg, agentMsg]);
     setState('thinking');
 
     try {
-      const chatRes = await sendChatMessage(trimmed, ch || 'default', lang, history);
-      if (gen !== generationRef.current) return;
-      let reply = chatRes.text;
+      // Live-caption streaming: as LLM deltas arrive they grow the agent
+      // bubble in place, and sentences start playing on Murf immediately.
+      const speaker = speakNaturalStream(lang, {
+        onChunk: () => {},
+        onDone: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
+          setState((curr) => {
+            if (curr !== 'speaking') return curr;
+            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+          });
+        },
+        onError: () => {
+          setCurrentlySpeakingId((curr) => (curr === agentMsgId ? null : curr));
+        },
+      });
+      setCurrentlySpeakingId(agentMsgId);
+
+      let liveReply = '';
+      const chatRes = await sendChatMessage(
+        trimmed,
+        ch || 'default',
+        lang,
+        history,
+        await getProfileContext(),
+        {
+          onDelta: (delta) => {
+            if (gen !== generationRef.current) return;
+            liveReply += delta;
+            speaker.pushText(delta);
+            // Live caption: grow the agent bubble in place as text streams.
+            setMessages((prev) =>
+              prev.map((m) => (m.id === agentMsgId ? { ...m, text: liveReply } : m)),
+            );
+          },
+        },
+      );
+      speaker.close();
+      if (gen !== generationRef.current) {
+        speaker.stop();
+        return;
+      }
+      // (gen guard also applies inside onDelta above — a newer turn silently
+      // discards this turn's remaining deltas.)
+
+      let reply = chatRes.text || liveReply;
       const turnCard = chatRes.card || null;
 
       setPushedCard(turnCard);
@@ -554,29 +622,22 @@ export function useAgoraVoice() {
         reply = lang === 'hi'
           ? 'माफ़ कीजिए, अभी सर्वर से संपर्क नहीं हो पा रहा है। कृपया एक बार दोबारा पूछें।'
           : 'I am unable to reach the server right now. Please ask again in a moment.';
-      }
-
-      const agentMsgId = `agent-${Date.now()}`;
-      setMessages([
-        ...newMsgs,
-        {
-          id: agentMsgId,
-          sender: 'agent',
-          text: reply,
-          timestamp: String(Date.now()),
-          card: turnCard,
-        },
-      ]);
-
-      speakText(reply, lang, agentMsgId, () => {
-        setState((curr) => {
-          if (curr !== 'speaking') return curr;
-          return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+        setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply } : m)));
+        // Offline fallback still speaks — with the device voice if Murf is down.
+        speakText(reply, lang, agentMsgId, () => {
+          setState((curr) => {
+            if (curr !== 'speaking') return curr;
+            return sessionModeRef.current === 'loop' ? 'listening' : 'idle';
+          });
         });
-      });
+      } else {
+        // Final text (authoritative, may differ in whitespace from stream).
+        setMessages((prev) => prev.map((m) => (m.id === agentMsgId ? { ...m, text: reply, card: turnCard } : m)));
+      }
       setState('speaking');
     } catch (err) {
       console.warn('sendVoiceQuery error:', err);
+      setCurrentlySpeakingId(null);
       if (stateRef.current === 'thinking' || stateRef.current === 'speaking') {
         setState(sessionModeRef.current === 'loop' ? 'listening' : 'idle');
       }

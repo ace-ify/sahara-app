@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Linking, Pressable } from 'react-native';
+import { View, StyleSheet, Linking } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AppText } from '../components/AppText';
@@ -13,18 +13,27 @@ import { useApp } from '../context/AppContext';
 export default function EmergencyScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { t } = useApp();
+  const { t, lang, userName, caregiverPhone } = useApp();
   const channel = route.params?.channel || 'emergency-live';
+  // Prefer the profile name (passed from the SOS tap) over any placeholder.
+  const patientName = route.params?.patient || userName || t('emerg_you');
 
   const [incident, setIncident] = useState<IncidentSnapshot | null>(null);
   const [avpuConfirmed, setAvpuConfirmed] = useState<boolean>(true);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const fetchStatus = async () => {
       try {
         const res = await getEmergencyStatus(channel);
-        if (mounted && res.status === 'active' && res.incident) setIncident(res.incident);
+        if (!mounted) return;
+        if (res.status === 'active' && res.incident) {
+          setIncident(res.incident);
+          setOffline(false);
+        } else if (res.status === 'offline') {
+          setOffline(true);
+        }
       } catch {}
     };
     fetchStatus();
@@ -36,23 +45,36 @@ export default function EmergencyScreen() {
   }, [channel]);
 
   const hasAck = incident?.status === 'acknowledged' || Boolean(incident?.acked_by);
-  const attemptsCount = incident?.attempts?.length || 2;
+  const attempts = incident?.attempts || [];
+  const caregiverNotified = attempts.some((a) => a.kind === 'caregiver' && a.delivered);
+  const emsNotified = attempts.some((a) => a.kind === 'ambulance' && a.delivered);
   const isUnresponsive = incident?.avpu_state === 'U';
 
+  // Caregiver identity comes from the saved profile — not a demo persona.
+  const caregiverLabel = caregiverPhone
+    ? lang === 'hi'
+      ? `केयरगिवर (…${caregiverPhone.slice(-4)})`
+      : `Caregiver (…${caregiverPhone.slice(-4)})`
+    : lang === 'hi'
+    ? 'परिवार का केयरगिवर'
+    : 'Family Caregiver';
+
   const participants = [
-    { icon: 'user', set: 'feather', name: t('emerg_you'), st: t('emerg_you_st'), ok: true },
+    { icon: 'user', set: 'feather', name: patientName, st: t('emerg_you_st'), ok: true },
     { icon: 'cpu', set: 'feather', name: t('emerg_ai'), st: t('emerg_ai_st'), ok: true },
-    { icon: 'phone-call', set: 'feather', name: t('emerg_caregiver'), st: hasAck ? t('emerg_caregiver_joined') : t('emerg_caregiver_alerted'), ok: true },
-    { icon: 'truck', set: 'feather', name: '108 / 112', st: attemptsCount >= 2 ? t('emerg_108_dispatched') : t('emerg_108_active'), ok: true },
+    { icon: 'phone-call', set: 'feather', name: caregiverLabel, st: hasAck ? t('emerg_caregiver_joined') : caregiverNotified ? t('emerg_caregiver_alerted') : t('emerg_108_active'), ok: true },
+    { icon: 'truck', set: 'feather', name: '108 / 112', st: emsNotified ? t('emerg_108_dispatched') : t('emerg_108_active'), ok: true },
   ];
 
   const steps = [
     { text: t('emerg_step_1'), done: true },
-    { text: t('emerg_step_2'), done: true },
-    { text: t('emerg_step_3'), done: true },
+    { text: t('emerg_step_2'), done: caregiverNotified || emsNotified },
+    { text: t('emerg_step_3'), done: emsNotified },
     {
-      text: hasAck ? t('emerg_step_4_ack').replace('{by}', incident?.acked_by || 'रमेश') : t('emerg_step_4_wait'),
-      done: hasAck || attemptsCount >= 2,
+      text: hasAck
+        ? t('emerg_step_4_ack').replace('{by}', incident?.acked_by || caregiverLabel)
+        : t('emerg_step_4_wait'),
+      done: hasAck,
     },
   ];
 
@@ -60,6 +82,20 @@ export default function EmergencyScreen() {
 
   return (
     <Screen bg={colors.bg} showSOS={false}>
+      {/* Offline warning — the on-screen 108 dialer is the live lifeline */}
+      {offline && (
+        <Card doubleBezel tint="amber" style={s.bannerCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="wifi-off" set="feather" size={18} color="#F59E0B" />
+            <AppText variant="small" color="#F59E0B" style={{ flex: 1 }}>
+              {lang === 'hi'
+                ? 'सर्वर से संपर्क नहीं — अलर्ट भेजा नहीं जा सका। कृपया सीधे 108 पर कॉल करें (नीचे बटन)।'
+                : 'Server unreachable — alerts were NOT sent. Please call 108 directly (button below).'}
+            </AppText>
+          </View>
+        </Card>
+      )}
+
       {/* Trauma Center Alert Header */}
       <Card doubleBezel tint="danger" style={s.bannerCard}>
         <View style={s.bannerRow}>
@@ -87,8 +123,10 @@ export default function EmergencyScreen() {
             ACTIVE RESPONDERS
           </AppText>
           <View style={s.liveMeshPill}>
-            <View style={s.greenDot} />
-            <AppText variant="small" weight="bold" color={colors.brand}>4 Connected</AppText>
+            <View style={[s.greenDot, offline && { backgroundColor: '#F59E0B' }]} />
+            <AppText variant="small" weight="bold" color={colors.brand}>
+              {offline ? (lang === 'hi' ? 'ऑफ़लाइन' : 'Offline') : 'SOS LIVE'}
+            </AppText>
           </View>
         </View>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: space.sm }}>

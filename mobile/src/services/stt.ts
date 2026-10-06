@@ -120,7 +120,30 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
       };
       rec.onspeechstart = () => onLevelRef.current?.(0.55);
       rec.onaudiostart = () => onLevelRef.current?.(0.25);
-      rec.onerror = () => setPhase('idle');
+      rec.onerror = (event: any) => {
+        // Surface the real cause instead of silently dying — "not-allowed"
+        // (mic blocked) and "no-speech" were previously swallowed, leaving the
+        // call looking live while nothing was being heard.
+        const kind = event?.error || 'unknown';
+        if (kind === 'not-allowed' || kind === 'service-not-allowed') {
+          setError(
+            lang === 'hi'
+              ? 'माइक्रोफ़ोन बंद है — ब्राउज़र में अनुमति दें।'
+              : 'Microphone blocked — allow mic access in the browser.',
+          );
+        } else if (kind === 'audio-capture') {
+          setError(
+            lang === 'hi' ? 'माइक्रोफ़ोन नहीं मिला।' : 'No microphone found.',
+          );
+        } else if (kind === 'network') {
+          setError(
+            lang === 'hi'
+              ? 'आवाज़ सेवा से संपर्क नहीं — इंटरनेट जाँचें।'
+              : 'Speech service unreachable — check internet.',
+          );
+        }
+        setPhase('idle');
+      };
       rec.onend = () => setPhase((prev) => (prev === 'recording' ? 'idle' : prev));
       recognitionRef.current = rec;
       rec.start();
