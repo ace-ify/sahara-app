@@ -3,6 +3,7 @@
 import type { RTMClient } from "agora-rtm";
 import dynamic from "next/dynamic";
 import Image from "next/image";
+import Link from "next/link";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -244,7 +245,17 @@ export default function LandingPage() {
 					showConversation ? "justify-end" : "justify-between"
 				}`}
 			>
-				{!showConversation ? <ShareButton menuPlacement="top" /> : null}
+				{!showConversation ? (
+					<div className="flex items-center gap-3">
+						<Link
+							href="/admin"
+							className="text-xs font-medium text-muted-foreground transition-colors hover:text-primary"
+						>
+							Admin dashboard →
+						</Link>
+						<ShareButton menuPlacement="top" />
+					</div>
+				) : null}
 				<div className="flex items-center justify-end gap-2 text-muted-foreground">
 					<span className="text-xs font-medium uppercase tracking-wide">
 						Powered by

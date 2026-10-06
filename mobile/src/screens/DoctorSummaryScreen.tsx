@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import { printToFileAsync } from 'expo-print';
 import { shareAsync } from 'expo-sharing';
-import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AppText } from '../components/AppText';
 import { Card } from '../components/Card';
@@ -28,7 +27,6 @@ const esc = (s: string) =>
     .replace(/>/g, '&gt;');
 
 export default function DoctorSummaryScreen() {
-  const nav = useNavigation<any>();
   const { lang, userName } = useApp();
   const [meds, setMeds] = useState<Medication[]>([]);
   const [vitals, setVitals] = useState<VitalsEntry[]>([]);

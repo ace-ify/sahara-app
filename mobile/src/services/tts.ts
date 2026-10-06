@@ -348,20 +348,33 @@ export async function speakNatural(
     // sites (netlify → http://localhost is dead by construction) and only
     // burned seconds before the robotic device-TTS fallback kicked in.
     let res: Response | null = null;
-    for (let attempt = 0; attempt < 2 && !res; attempt += 1) {
-      try {
-        res = await fetch(`${API_BASE_URL}/api/tts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: trimmed, lang }),
-        });
-        if (!res.ok) {
-          res = null;
-          throw new Error(`tts error ${res === null ? 'no-response' : ''}`);
+    const urlsToTry = [API_BASE_URL];
+    if (
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1') &&
+      API_BASE_URL !== 'http://localhost:8000'
+    ) {
+      urlsToTry.push('http://localhost:8000');
+    }
+
+    for (const baseUrl of urlsToTry) {
+      for (let attempt = 0; attempt < 2 && !res; attempt += 1) {
+        try {
+          const r = await fetch(`${baseUrl}/api/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: trimmed, lang }),
+          });
+          if (r.ok) {
+            res = r;
+            break;
+          }
+        } catch {
+          // retry or try next url
         }
-      } catch (err) {
-        if (attempt === 1) throw err;
       }
+      if (res) break;
     }
 
     if (!res) throw new Error('no response from tts');

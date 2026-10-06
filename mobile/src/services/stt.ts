@@ -75,11 +75,45 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
   const [phase, setPhase] = useState<DictationPhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<any>(null);
+  const audioStreamRef = useRef<any>(null);
+  const audioContextRef = useRef<any>(null);
+  const chunksRef = useRef<any[]>([]);
+  const useMediaRecorderFallbackRef = useRef(false);
+  const autoStopTimerRef = useRef<any>(null);
+  const silenceTimerRef = useRef<any>(null);
+  const gotSpeechRef = useRef(false);
+
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
   const onLevelRef = useRef(hooks?.onLevel);
   onLevelRef.current = hooks?.onLevel;
   const voiceTurnRef = useRef(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  const cleanupMedia = () => {
+    if (autoStopTimerRef.current) {
+      clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+    if (silenceTimerRef.current) {
+      clearInterval(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (audioStreamRef.current) {
+      try {
+        audioStreamRef.current.getTracks().forEach((t: any) => t.stop());
+      } catch {}
+      audioStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close?.();
+      } catch {}
+      audioContextRef.current = null;
+    }
+  };
 
   useEffect(
     () => () => {
@@ -87,19 +121,154 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
         recognitionRef.current?.stop?.();
       } catch {}
       recognitionRef.current = null;
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {}
+      mediaRecorderRef.current = null;
+      cleanupMedia();
     },
     [],
   );
 
+  const startMediaRecorder = useCallback(async () => {
+    setError(null);
+    cleanupMedia();
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setError(lang === 'hi' ? 'माइक्रोफ़ोन उपलब्ध नहीं है।' : 'Microphone is not supported.');
+      setPhase('idle');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      chunksRef.current = [];
+
+      // Audio analysis for level meter & voice-turn silence detection
+      try {
+        const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          audioContextRef.current = ctx;
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+          gotSpeechRef.current = false;
+          let lastSpeechTime = Date.now();
+          silenceTimerRef.current = setInterval(() => {
+            if (phaseRef.current !== 'recording') return;
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i += 1) sum += dataArray[i];
+            const avg = sum / dataArray.length / 255;
+            onLevelRef.current?.(Math.min(1, avg * 3.5));
+
+            if (voiceTurnRef.current) {
+              const now = Date.now();
+              if (avg > 0.08) {
+                gotSpeechRef.current = true;
+                lastSpeechTime = now;
+              }
+              if (gotSpeechRef.current && now - lastSpeechTime > VOICE_TURN_SILENCE_MS) {
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                  mediaRecorderRef.current.stop();
+                }
+              }
+            }
+          }, 80);
+        }
+      } catch {}
+
+      const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.('audio/webm'))
+        ? 'audio/webm'
+        : '';
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e: any) => {
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        cleanupMedia();
+        if (chunksRef.current.length === 0) {
+          setPhase('idle');
+          return;
+        }
+        setPhase('transcribing');
+        const recordedBlob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        chunksRef.current = [];
+
+        try {
+          const formData = new FormData();
+          formData.append('file', recordedBlob, 'speech.webm');
+
+          const urlsToTry = [API_BASE_URL];
+          if (
+            typeof window !== 'undefined' &&
+            (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1') &&
+            API_BASE_URL !== 'http://localhost:8000'
+          ) {
+            urlsToTry.push('http://localhost:8000');
+          }
+
+          let text = '';
+          for (const baseUrl of urlsToTry) {
+            try {
+              const res = await fetch(`${baseUrl}/api/transcribe?lang=${encodeURIComponent(lang)}`, {
+                method: 'POST',
+                body: formData,
+              });
+              if (res.ok) {
+                const data = await res.json();
+                text = (data?.text || '').trim();
+                break;
+              }
+            } catch {}
+          }
+
+          if (text) {
+            onResultRef.current(text, false);
+          }
+        } catch (err) {
+          console.warn('[stt] transcription error:', err);
+        } finally {
+          setPhase('idle');
+        }
+      };
+
+      recorder.start(250);
+      setPhase('recording');
+      autoStopTimerRef.current = setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop();
+      }, VOICE_TURN_MAX_MS);
+    } catch {
+      setError(
+        lang === 'hi'
+          ? 'माइक्रोफ़ोन बंद है — ब्राउज़र में अनुमति दें।'
+          : 'Microphone blocked — allow mic access in browser.',
+      );
+      setPhase('idle');
+    }
+  }, [lang]);
+
   const start = useCallback(() => {
+    setError(null);
+    if (useMediaRecorderFallbackRef.current) {
+      startMediaRecorder();
+      return;
+    }
     const SR: any =
       (globalThis as any).SpeechRecognition || (globalThis as any).webkitSpeechRecognition;
     if (!SR) {
-      setError(
-        lang === 'hi'
-          ? 'इस ब्राउज़र में आवाज़ पहचान उपलब्ध नहीं है।'
-          : 'Speech recognition is not supported in this browser.',
-      );
+      useMediaRecorderFallbackRef.current = true;
+      startMediaRecorder();
       return;
     }
     try {
@@ -121,10 +290,15 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
       rec.onspeechstart = () => onLevelRef.current?.(0.55);
       rec.onaudiostart = () => onLevelRef.current?.(0.25);
       rec.onerror = (event: any) => {
-        // Surface the real cause instead of silently dying — "not-allowed"
-        // (mic blocked) and "no-speech" were previously swallowed, leaving the
-        // call looking live while nothing was being heard.
         const kind = event?.error || 'unknown';
+        if (kind === 'network') {
+          console.info('[stt] Web Speech API network error (Google Speech blocked/unreachable). Switching to MediaRecorder + Whisper.');
+          useMediaRecorderFallbackRef.current = true;
+          try { rec.abort?.(); } catch {}
+          recognitionRef.current = null;
+          startMediaRecorder();
+          return;
+        }
         if (kind === 'not-allowed' || kind === 'service-not-allowed') {
           setError(
             lang === 'hi'
@@ -135,12 +309,6 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
           setError(
             lang === 'hi' ? 'माइक्रोफ़ोन नहीं मिला।' : 'No microphone found.',
           );
-        } else if (kind === 'network') {
-          setError(
-            lang === 'hi'
-              ? 'आवाज़ सेवा से संपर्क नहीं — इंटरनेट जाँचें।'
-              : 'Speech service unreachable — check internet.',
-          );
         }
         setPhase('idle');
       };
@@ -149,19 +317,38 @@ function useDictationWeb(lang: string, onResult: DictationResultHandler, hooks?:
       rec.start();
       setPhase('recording');
     } catch {
-      setError(lang === 'hi' ? 'माइक शुरू नहीं हो सका।' : 'Could not start the microphone.');
+      useMediaRecorderFallbackRef.current = true;
+      startMediaRecorder();
     }
-  }, [lang]);
+  }, [lang, startMediaRecorder]);
 
   const stop = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
     try {
       recognitionRef.current?.stop?.();
     } catch {}
     recognitionRef.current = null;
-    setPhase('idle');
+    cleanupMedia();
+    setPhase((prev) => (prev === 'recording' ? 'idle' : prev));
   }, []);
 
   const cancel = useCallback(() => {
+    chunksRef.current = [];
+    cleanupMedia();
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.ondataavailable = null;
+        mediaRecorderRef.current.onstop = null;
+        if (mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
     try {
       recognitionRef.current?.abort?.();
     } catch {}

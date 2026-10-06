@@ -1023,14 +1023,14 @@ async def tts_endpoint(req: TtsRequest):
     if lang_code.startswith("en"):
         voice_id = "en-IN-isha"
         style = "Conversational"
-        model = "Falcon"
         locale = "en-IN"
     else:
-        voice_id = os.getenv("MURF_VOICE", "Pooja")
-        if voice_id in ("Anisha", "hi-IN-shweta"):
-            voice_id = "Pooja"
+        configured_voice = os.getenv("MURF_VOICE", "hi-IN-shweta")
+        if configured_voice in ("Anisha", "Pooja", ""):
+            voice_id = "hi-IN-shweta"
+        else:
+            voice_id = configured_voice
         style = os.getenv("MURF_STYLE", "Conversational")
-        model = os.getenv("MURF_MODEL_TTS", "Falcon")
         locale = "hi-IN"
 
     body = {
@@ -1038,7 +1038,7 @@ async def tts_endpoint(req: TtsRequest):
         "voiceId": voice_id,
         "locale": locale,
         "style": style,
-        "model": model,
+        "modelVersion": "GEN2",
         "format": "MP3",
         "sampleRate": 24000,
     }
@@ -1050,8 +1050,23 @@ async def tts_endpoint(req: TtsRequest):
                 json=body,
             )
         if res.status_code != 200:
+            logger.warning("Murf TTS failed status=%s body=%s, retrying without style/modelVersion", res.status_code, res.text[:300])
+            fallback_body = {
+                "text": text[:2000],
+                "voiceId": voice_id,
+                "locale": locale,
+                "format": "MP3",
+                "sampleRate": 24000,
+            }
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(
+                    "https://api.murf.ai/v1/speech/generate",
+                    headers={"api-key": murf_key, "Content-Type": "application/json"},
+                    json=fallback_body,
+                )
+        if res.status_code != 200:
             logger.warning("Murf TTS failed status=%s body=%s", res.status_code, res.text[:300])
-            raise HTTPException(status_code=502, detail="Murf TTS failed")
+            raise HTTPException(status_code=502, detail=f"Murf TTS failed: {res.text[:200]}")
         data = res.json()
         audio_url = data.get("audioFile") or data.get("audio_url") or ""
         if not audio_url:
