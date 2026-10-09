@@ -15,6 +15,7 @@ import {
   Animated,
   useWindowDimensions,
   Image,
+  Alert,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -305,13 +306,31 @@ export default function TalkScreen() {
   const handleSOS = () => {
     const ch = channelName || `emergency-${Date.now()}`;
     const sosPatient = userName || 'मरीज़';
-    triggerEmergency(
-      ch,
-      lang === 'hi' ? 'मरीज़ ने सहायता के लिए SOS बटन दबाया' : 'Patient pressed the SOS button for help',
-      sosPatient,
-      caregiverPhone || undefined,
-    ).catch((e) => console.warn('[sos] dispatch error:', e));
-    nav.navigate('Emergency', { channel: ch, patient: sosPatient });
+
+    const dispatchAction = () => {
+      triggerEmergency(
+        ch,
+        lang === 'hi' ? 'मरीज़ ने सहायता के लिए SOS बटन दबाया' : 'Patient pressed the SOS button for help',
+        sosPatient,
+        caregiverPhone || undefined,
+      ).catch((e) => console.warn('[sos] dispatch error:', e));
+      nav.navigate('Emergency', { channel: ch, patient: sosPatient });
+    };
+
+    if (caregiverPhone) {
+      Alert.alert(
+        lang === 'hi' ? '🚨 आपातकालीन SOS पुष्टि' : '🚨 Confirm Emergency SOS',
+        lang === 'hi'
+          ? `क्या आप आपातकालीन SOS अलर्ट सक्रिय करना चाहते हैं? केयरगिवर (${caregiverPhone}) और आपातकालीन सेवाओं को तुरंत सूचित किया जाएगा।`
+          : `Do you want to trigger Emergency SOS? Caregiver (${caregiverPhone}) and emergency services will be dispatched immediately.`,
+        [
+          { text: lang === 'hi' ? 'रद्द करें' : 'Cancel', style: 'cancel' },
+          { text: lang === 'hi' ? 'हाँ, मदद चाहिए' : 'Yes, Dispatch SOS', style: 'destructive', onPress: dispatchAction },
+        ]
+      );
+    } else {
+      dispatchAction();
+    }
   };
 
   const handleSendText = (textToSend?: string) => {

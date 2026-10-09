@@ -1616,8 +1616,14 @@ def get_reminders() -> Dict[str, Any]:
 
 def escalate_to_caregiver(reason: str, urgency: str = "medium") -> Dict[str, Any]:
     """Notify family caregiver about assistance need via WhatsApp deep link + Direct Voice Call (NO SMS)."""
-    caregiver_name = "Naimish (Caregiver)"
-    caregiver_phone = os.getenv("CAREGIVER_PHONE", "+918756260291")
+    caregiver_name = "Family Caregiver"
+    caregiver_phone = os.getenv("CAREGIVER_PHONE", "")
+    if not caregiver_phone:
+        return {
+            "status": "simulated",
+            "message": "No caregiver phone configured. Running in demo mode.",
+            "urgency": urgency,
+        }
     clean_phone = caregiver_phone.replace("+", "").replace(" ", "").replace("-", "")
 
     ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))

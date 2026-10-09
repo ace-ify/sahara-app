@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Linking } from 'react-native';
+import { View, StyleSheet, Linking, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AppText } from '../components/AppText';
@@ -287,14 +287,28 @@ export default function EmergencyScreen() {
             variant="outline"
             big
             onPress={() => {
-              triggerTwilioCall({
-                to: caregiverPhone,
-                patient: patientName,
-                kind: 'emergency',
-                reason: incident?.reason || 'आपातकालीन सहायता अनुरोध',
-                lang,
-              }).catch(() => {});
-              Linking.openURL(`tel:${caregiverPhone.replace(/\s+/g, '')}`).catch(() => {});
+              Alert.alert(
+                lang === 'hi' ? 'फोन कॉल की पुष्टि' : 'Confirm Phone Call',
+                lang === 'hi'
+                  ? `क्या आप ${caregiverPhone} पर रियल Twilio इमरजेंसी वॉइस कॉल मिलाना चाहते हैं?`
+                  : `Do you want to dial a live Twilio voice call to ${caregiverPhone}?`,
+                [
+                  { text: lang === 'hi' ? 'रद्द करें' : 'Cancel', style: 'cancel' },
+                  {
+                    text: lang === 'hi' ? 'कॉल करें' : 'Call Now',
+                    onPress: () => {
+                      triggerTwilioCall({
+                        to: caregiverPhone,
+                        patient: patientName,
+                        kind: 'emergency',
+                        reason: incident?.reason || 'आपातकालीन सहायता अनुरोध',
+                        lang,
+                      }).catch(() => {});
+                      Linking.openURL(`tel:${caregiverPhone.replace(/\s+/g, '')}`).catch(() => {});
+                    },
+                  },
+                ]
+              );
             }}
           />
         ) : null}

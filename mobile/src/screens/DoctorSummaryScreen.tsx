@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Alert } from 'react-native';
 import { printToFileAsync } from 'expo-print';
 import { shareAsync } from 'expo-sharing';
 import { Screen } from '../components/Screen';
@@ -191,13 +191,36 @@ export default function DoctorSummaryScreen() {
           icon="phone-call"
           variant="outline"
           onPress={() => {
-            triggerTwilioCall({
-              to: caregiverPhone || '+918756260291',
-              patient: userName || 'मरीज़',
-              kind: 'followup',
-              note: 'डॉक्टर सारांश समीक्षा व फॉलो-अप',
-              lang,
-            }).catch(() => {});
+            if (!caregiverPhone) {
+              Alert.alert(
+                lang === 'hi' ? 'केयरगिवर नंबर नहीं मिला' : 'No Caregiver Phone Configured',
+                lang === 'hi'
+                  ? 'कृपया पहले प्रोफाइल में केयरगिवर / फैमिली फोन नंबर जोड़ें।'
+                  : 'Please configure a caregiver phone number in Profile first.'
+              );
+              return;
+            }
+            Alert.alert(
+              lang === 'hi' ? 'फोन कॉल की पुष्टि' : 'Confirm Follow-Up Call',
+              lang === 'hi'
+                ? `क्या आप ${caregiverPhone} पर रियल Twilio AI वॉइस कॉल मिलाना चाहते हैं?`
+                : `Do you want to place a live Twilio voice follow-up call to ${caregiverPhone}?`,
+              [
+                { text: lang === 'hi' ? 'रद्द करें' : 'Cancel', style: 'cancel' },
+                {
+                  text: lang === 'hi' ? 'कॉल करें' : 'Call Now',
+                  onPress: () => {
+                    triggerTwilioCall({
+                      to: caregiverPhone,
+                      patient: userName || 'मरीज़',
+                      kind: 'followup',
+                      note: 'डॉक्टर सारांश समीक्षा व फॉलो-अप',
+                      lang,
+                    }).catch(() => {});
+                  },
+                },
+              ]
+            );
           }}
         />
       </ScrollView>

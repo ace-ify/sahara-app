@@ -37,7 +37,7 @@ class WhatsAppClient:
         token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         api_version: str = "v19.0",
-        default_recipient: str = "+918756260291",
+        default_recipient: str = "",
         openwa_url: Optional[str] = None,
         openwa_key: Optional[str] = None,
         openwa_session: Optional[str] = None,

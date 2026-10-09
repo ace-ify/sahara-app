@@ -46,6 +46,20 @@ LLM_PROXY_SECRET = os.getenv("LLM_PROXY_SECRET", "")
 
 logger = logging.getLogger("uvicorn.error")
 
+# Simple in-memory rate limiter per IP/client to guard telephony & emergency routes
+_RATE_LIMITS: Dict[str, float] = {}
+
+def _check_rate_limit(key: str, window_seconds: float = 60.0) -> None:
+    now = time.time()
+    last = _RATE_LIMITS.get(key, 0)
+    if now - last < window_seconds:
+        wait = int(window_seconds - (now - last))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Please wait {wait} seconds before making another call.",
+        )
+    _RATE_LIMITS[key] = now
+
 
 def _log_route_error(route: str, exc: Exception, **context) -> None:
     """Log route failures with safe request context and a traceback."""
@@ -425,7 +439,7 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
         # Parallel Dispatch: Contact 0 (Caregiver) + Contact 1 (108 EMS) fire concurrently at t=0
         chat_patient = (payload.get("patient") or "").strip() or "मरीज़"
         chat_caregiver_phone = (payload.get("caregiver_phone") or "").strip() or os.getenv(
-            "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
+            "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "")
         )
         contacts = [
             emergency.Contact(name=f"{chat_patient} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=chat_caregiver_phone),
@@ -473,7 +487,7 @@ async def llm_chat_completions(request: Request, channel: Optional[str] = Query(
         if classification.tool_name == "trigger_emergency":
             chat_patient = (payload.get("patient") or "").strip() or "मरीज़"
             chat_caregiver_phone = (payload.get("caregiver_phone") or "").strip() or os.getenv(
-                "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
+                "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "")
             )
             contacts = [
                 emergency.Contact(name=f"{chat_patient} — केयरगिवर / Family Caregiver", kind="caregiver", endpoint=chat_caregiver_phone),
@@ -799,6 +813,10 @@ async def _default_notify(contact: emergency.Contact, incident: emergency.Incide
         incident.channel,
     )
     if contact.kind == "caregiver":
+        if not contact.endpoint or len(str(contact.endpoint).strip()) < 7:
+            logger.info("Caregiver contact endpoint not configured. Running dispatch in simulation/demo mode.")
+            return True
+
         # 1. Dispatches WhatsApp Alert (OpenWA Gateway primary / Meta Cloud API secondary)
         wa_res = await whatsapp.whatsapp_client.send_emergency_alert(
             patient_name=incident.patient,
@@ -883,10 +901,13 @@ class TriggerEmergencyRequest(BaseModel):
 
 
 @router.post("/api/emergency/trigger")
-async def trigger_emergency(req: TriggerEmergencyRequest):
+async def trigger_emergency(req: TriggerEmergencyRequest, request: Request):
     """Trigger the multi-contact parallel emergency dispatch ladder without disconnecting the call."""
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(f"emerg_{client_ip}", window_seconds=30.0)
+
     caregiver_phone = (req.caregiver_phone or "").strip() or os.getenv(
-        "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "+918756260291")
+        "CAREGIVER_WHATSAPP_PHONE", os.getenv("CAREGIVER_PHONE", "")
     )
     patient_name = (req.patient or "").strip() or "मरीज़"
     contacts = [
@@ -1334,8 +1355,8 @@ _PATIENTS: Dict[str, Dict[str, Any]] = {
     "pat-naimish": {
         "id": "pat-naimish",
         "name": "Naimish",
-        "caregiver_phone": "+918756260291",
-        "phone": "+918756260291",
+        "caregiver_phone": os.getenv("CAREGIVER_PHONE", None),
+        "phone": os.getenv("CAREGIVER_PHONE", None),
         "channel": "patient-naimish",
         "default_risk": {
             "level": "amber",
@@ -1346,8 +1367,8 @@ _PATIENTS: Dict[str, Dict[str, Any]] = {
     "pat-ramprasad": {
         "id": "pat-ramprasad",
         "name": "Ramprasad Sharma (72)",
-        "caregiver_phone": "+918756260291",
-        "phone": "+918756260291",
+        "caregiver_phone": None,
+        "phone": None,
         "channel": "emergency-live",
         "default_risk": {
             "level": "red",
@@ -1549,7 +1570,6 @@ async def admin_start_followup_call(req: StartFollowupRequest):
     phone_to_call = (
         patient.get("caregiver_phone")
         or patient.get("phone")
-        or ("+918756260291" if "Naimish" in patient.get("name", "") else None)
     )
     twilio_call_res = None
     if phone_to_call:
@@ -1645,8 +1665,13 @@ class DirectTwilioCallRequest(BaseModel):
 
 
 @router.post("/api/twilio/call")
-async def direct_twilio_call(req: DirectTwilioCallRequest):
+async def direct_twilio_call(req: DirectTwilioCallRequest, request: Request):
     """Directly trigger a real outbound PSTN voice call via Sahara Twilio (+1 682 349 7450)."""
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(f"twilio_{client_ip}", window_seconds=60.0)
+
+    if not req.to or len(req.to.strip()) < 7:
+        raise HTTPException(status_code=400, detail="Invalid destination phone number")
     if req.kind == "followup":
         res = await outbound_call.trigger_followup_call(
             to=req.to,
